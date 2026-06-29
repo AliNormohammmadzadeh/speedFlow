@@ -49,6 +49,7 @@ def metrics_overview():
     })
     return {
         "processed_events_count": count,
+        "events_indexed": count,
         "active_verticals": ["gaming_esports", "financial_markets", "accommodation_travel"],
         "throughput_events_per_min": count // 60 if count else 0,
     }

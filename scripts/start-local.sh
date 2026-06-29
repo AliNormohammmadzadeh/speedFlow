@@ -8,8 +8,15 @@ export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
 echo "==> Starting infrastructure (Docker)..."
 docker compose up -d postgres redis elasticsearch kafka schema-registry 2>&1 | tail -5
 
-echo "==> Ensuring Kafka topics exist..."
-docker compose up kafka-init 2>&1 | tail -3
+echo "==> Waiting for Kafka to be healthy..."
+for i in $(seq 1 30); do
+  state=$(docker inspect -f '{{.State.Health.Status}}' platform-kafka 2>/dev/null || echo "starting")
+  [ "$state" = "healthy" ] && break
+  sleep 2
+done
+
+echo "==> Ensuring Kafka topics exist (kafka-init)..."
+docker compose run --rm kafka-init 2>&1 | tail -3
 
 echo "==> Registering Avro schemas..."
 docker compose up schema-init 2>&1 | tail -3

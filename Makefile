@@ -1,10 +1,23 @@
-.PHONY: up down logs orchestrate connectors schemas init build portal
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b
 
-up:
+# Stable single-command bring-up: pre-pull base images, build sequentially
+# (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
+up: pre-pull build-seq
+	docker compose up -d
+	@echo "Stack starting. Run 'make health' in ~60s, then 'make connectors'."
+
+# Fast path for warm caches (parallel build).
+up-fast:
 	docker compose up -d --build
 
 down:
 	docker compose down
+
+pre-pull:
+	bash scripts/pre-pull-images.sh
+
+build-seq:
+	bash scripts/docker-build-all.sh
 
 build:
 	docker compose build
@@ -46,6 +59,9 @@ status:
 
 pipeline-test:
 	bash scripts/pipeline-test.sh
+
+path-b:
+	bash scripts/path-b-e2e.sh
 
 # Multi-tenant platform
 tenant-create:
