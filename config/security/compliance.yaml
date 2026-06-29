@@ -1,0 +1,38 @@
+# Phase 6: Enterprise Security & Compliance (local dev baseline)
+
+version: "1.0"
+
+encryption:
+  at_rest: aes256
+  in_transit: tls_1_2
+
+rbac:
+  roles:
+    admin:
+      permissions: ["*"]
+    operator:
+      permissions: ["deploy", "scale", "view_metrics"]
+    analyst:
+      permissions: ["read_data", "query_dashboard"]
+    api_consumer:
+      permissions: ["marketplace_read", "marketplace_order"]
+
+pii_handling:
+  scan_before_ingest: true
+  redact_fields: [email, phone, ssn, credit_card]
+  block_on_pii_detected: true
+
+audit:
+  log_all_agent_actions: true
+  log_all_data_access: true
+  retention_days: 2555
+
+compliance:
+  license_check_sources: true
+  gdpr_right_to_delete: true
+  data_residency_enforcement: true
+
+local_dev_overrides:
+  elasticsearch_security: disabled
+  postgres_ssl: disabled
+  note: "Enable full security stack in production"

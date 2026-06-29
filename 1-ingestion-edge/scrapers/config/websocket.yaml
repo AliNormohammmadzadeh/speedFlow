@@ -1,0 +1,7 @@
+sources:
+  - id: binance_btc_depth
+    type: websocket
+    vertical: financial_markets
+    url: "wss://stream.binance.com:9443/ws/btcusdt@trade"
+    event_type: market_trade
+    enabled: true

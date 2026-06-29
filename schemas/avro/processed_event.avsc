@@ -1,0 +1,19 @@
+{
+  "type": "record",
+  "name": "ProcessedEvent",
+  "namespace": "com.speedflow.events",
+  "doc": "Processed/predicted data from Flink/ML pipeline",
+  "fields": [
+    {"name": "event_id", "type": "string"},
+    {"name": "source_id", "type": "string"},
+    {"name": "vertical", "type": "string"},
+    {"name": "event_type", "type": "string"},
+    {"name": "timestamp", "type": "long", "logicalType": "timestamp-millis"},
+    {"name": "processed_at", "type": "long", "logicalType": "timestamp-millis"},
+    {"name": "features", "type": {"type": "map", "values": "double"}, "default": {}},
+    {"name": "predictions", "type": {"type": "map", "values": "string"}, "default": {}},
+    {"name": "confidence", "type": ["null", "double"], "default": null},
+    {"name": "processing_strategy", "type": {"type": "enum", "name": "ProcessingStrategy", "symbols": ["flink_stateful", "ml_cuda", "simple_aggregation"]}},
+    {"name": "payload", "type": "string", "doc": "JSON-encoded processed result"}
+  ]
+}

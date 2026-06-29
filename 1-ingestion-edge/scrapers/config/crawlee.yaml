@@ -1,0 +1,11 @@
+sources:
+  - id: example_news_crawler
+    type: crawlee
+    vertical: gaming_esports
+    url: "https://httpbin.org/html"
+    interval_seconds: 300
+    event_type: crawled_content
+    enabled: true
+    selectors:
+      title: "h1"
+      content: "p"

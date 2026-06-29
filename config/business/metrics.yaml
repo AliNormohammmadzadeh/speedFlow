@@ -1,0 +1,62 @@
+# Phase 1: Business Goal Metrics
+# These are the numeric targets the Strategic Agent optimizes against.
+
+version: "1.0"
+
+primary_kpis:
+  revenue_per_kilobyte:
+    description: "Revenue generated per KB of raw data ingested"
+    unit: "USD/KB"
+    target: 0.05
+    weight: 0.25
+    direction: maximize
+
+  trading_profit_factor:
+    description: "Net trading profit / gross loss over rolling 7d window"
+    unit: "ratio"
+    target: 1.5
+    weight: 0.30
+    direction: maximize
+
+  b2b_churn_reduction:
+    description: "Reduction in B2B customer churn vs baseline"
+    unit: "percent"
+    target: 15.0
+    weight: 0.15
+    direction: maximize
+
+  data_freshness_score:
+    description: "Average freshness of processed signals (0-1, 1 = real-time)"
+    unit: "score"
+    target: 0.95
+    weight: 0.15
+    direction: maximize
+
+  ingestion_cost_efficiency:
+    description: "Value score per dollar spent on scraping/compute"
+    unit: "score/USD"
+    target: 10.0
+    weight: 0.15
+    direction: maximize
+
+composite_score:
+  formula: "weighted_sum(primary_kpis)"
+  normalization: "min_max_per_vertical"
+  rebalance_interval_hours: 24
+
+feedback_sources:
+  - app: accommodation_aggregator
+    metrics: [usage_sessions, conversion_rate, revenue_usd]
+  - app: trading_bot
+    metrics: [pnl_usd, win_rate, sharpe_ratio, drawdown_pct]
+  - app: auditing_service
+    metrics: [customer_value_score, dispute_rate]
+  - app: meta_dashboard
+    metrics: [daily_active_users, query_latency_p95, engagement_minutes]
+  - app: data_marketplace
+    metrics: [api_calls, revenue_usd, top_product_demand]
+
+budget_constraints:
+  daily_scraping_budget_usd: 500
+  daily_compute_budget_usd: 300
+  daily_llm_budget_usd: 100

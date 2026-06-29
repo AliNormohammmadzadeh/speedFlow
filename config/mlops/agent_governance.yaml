@@ -1,0 +1,42 @@
+# Phase 6: MLOps - Agent & Model Governance
+
+version: "1.0"
+
+agent_registry:
+  strategy:
+    version: "1.0.0"
+    eval_metrics: [composite_score_delta, gap_detection_accuracy]
+    drift_threshold: 0.15
+    retrain_trigger: weekly
+
+  discovery:
+    version: "1.0.0"
+    eval_metrics: [source_value_correlation, false_positive_rate]
+    drift_threshold: 0.20
+
+  processing:
+    version: "1.0.0"
+    eval_metrics: [latency_p95, prediction_accuracy]
+    drift_threshold: 0.10
+
+  config:
+    version: "1.0.0"
+    eval_metrics: [deployment_success_rate, rollback_count]
+    drift_threshold: 0.05
+
+model_versioning:
+  storage: s3://speedflow-ml-models
+  format: onnx
+  promotion_criteria:
+    min_accuracy: 0.85
+    max_latency_ms: 100
+
+evaluation:
+  schedule: "0 2 * * *"
+  holdout_ratio: 0.2
+  alert_on_regression: true
+
+logging:
+  agent_decisions: true
+  bridge_actions: true
+  retention_days: 90

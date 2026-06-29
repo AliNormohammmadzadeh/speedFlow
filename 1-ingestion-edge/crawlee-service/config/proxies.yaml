@@ -1,0 +1,20 @@
+# Proxy pools for Crawlee tiered rotation
+# Set CRAWLEE_PROXY_URL or replace placeholders for production
+
+proxy_urls:
+  - "${CRAWLEE_PROXY_URL:-}"
+
+tiered_proxy_urls:
+  standard:
+    - "${CRAWLEE_PROXY_URL:-}"
+  premium:
+    - "${CRAWLEE_PROXY_URL:-}"
+    # Add paid proxy endpoints for production:
+    # - "http://user:pass@premium-proxy-1:8080"
+    # - "http://user:pass@premium-proxy-2:8080"
+
+defaults:
+  use_session_pool: true
+  retry_on_blocked: true
+  max_concurrency: 5
+  max_pages: 100

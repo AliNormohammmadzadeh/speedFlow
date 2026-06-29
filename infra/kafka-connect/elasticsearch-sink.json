@@ -1,0 +1,13 @@
+{
+  "connector.class": "io.confluent.connect.elasticsearch.ElasticsearchSinkConnector",
+  "tasks.max": "1",
+  "topics": "processed_stream",
+  "connection.url": "http://elasticsearch:9200",
+  "type.name": "_doc",
+  "key.ignore": "true",
+  "schema.ignore": "true",
+  "index.name": "processed-events",
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

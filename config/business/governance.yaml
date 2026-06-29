@@ -1,0 +1,78 @@
+# Phase 1: Data Governance & Product Catalog
+
+version: "1.0"
+
+data_quality:
+  rules:
+    - id: schema_compliance
+      description: "All raw events must validate against Avro schema before Kafka publish"
+      enforcement: reject
+      schema_subject: raw_event-value
+
+    - id: freshness_sla
+      description: "Processed signals must arrive within SLA of source event"
+      max_latency_seconds: 30
+      enforcement: alert
+
+    - id: completeness
+      description: "Required fields must be present"
+      required_fields: [source_id, event_type, timestamp, payload]
+      enforcement: reject
+
+    - id: deduplication
+      description: "Duplicate events within 60s window are dropped"
+      window_seconds: 60
+      key_fields: [source_id, event_id]
+
+data_sovereignty:
+  default_region: eu-west-1
+  pii_regions:
+    eu: [GDPR]
+    us: [CCPA]
+  cross_border_transfer: require_explicit_consent
+  retention_days:
+    raw: 90
+    processed: 365
+    audit_logs: 2555
+
+security:
+  encryption_at_rest: required
+  encryption_in_transit: tls_1_2_minimum
+  pii_scan_before_processing: true
+  license_compliance_check: true
+  rbac_roles: [admin, operator, analyst, api_consumer]
+
+data_products:
+  catalog:
+    - id: live_esports_odds
+      name: "Live Esports Odds Feed"
+      vertical: gaming_esports
+      topic: processed_stream
+      filter: "event_type = 'esports_odds'"
+      pricing_model: per_api_call
+      base_price_usd: 0.001
+      sla_freshness_seconds: 5
+
+    - id: crypto_price_signals
+      name: "Crypto Price & Momentum Signals"
+      vertical: financial_markets
+      topic: processed_stream
+      filter: "event_type = 'market_signal'"
+      pricing_model: subscription_monthly
+      base_price_usd: 499
+      sla_freshness_seconds: 1
+
+    - id: accommodation_price_index
+      name: "Accommodation Price Index"
+      vertical: accommodation_travel
+      topic: processed_stream
+      filter: "event_type = 'accommodation_price'"
+      pricing_model: revenue_share
+      base_price_usd: 0.0
+      revenue_share_pct: 5
+
+packaging:
+  format: avro_json
+  delivery: kafka_topic | rest_api | s3_export
+  versioning: semver
+  changelog_required: true

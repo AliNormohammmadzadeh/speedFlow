@@ -1,0 +1,40 @@
+# Phase 6: FinOps - Cost controls for Strategic AI
+
+version: "1.0"
+
+budgets:
+  daily:
+    scraping_usd: 500
+    compute_usd: 300
+    llm_usd: 100
+    storage_usd: 50
+  monthly_cap_usd: 25000
+
+cost_allocation:
+  tags:
+    - vertical
+    - agent
+    - scraper_type
+
+alerts:
+  - threshold_pct: 80
+    action: notify_ops
+  - threshold_pct: 100
+    action: throttle_scrapers
+  - threshold_pct: 110
+    action: pause_discovery_agent
+
+optimization_rules:
+  - name: low_value_source_pause
+    condition: "value_score < 0.3 AND cost_per_day > 10"
+    action: disable_source
+
+  - name: llm_budget_guard
+    condition: "llm_spend_today > daily_llm_budget * 0.9"
+    action: fallback_to_rule_based
+
+scrape_cost_estimates:
+  rest: 0.001
+  websocket: 0.005
+  crawlee: 0.01
+  selenium: 0.05

@@ -1,0 +1,62 @@
+# Subscription plans — controls which platform features each tenant can use
+
+plans:
+  starter:
+    name: Starter
+    price_usd_monthly: 49
+    limits:
+      scrape_requests_per_day: 50
+      max_pages_per_job: 20
+      max_concurrency: 2
+      storage_gb: 1
+    features:
+      scrapers: [rest, crawlee]
+      ai_scrape_planner: true
+      proxy: false
+      dedicated_kafka_topic: false
+      ai_agents: [scrape_planner]
+      flink_processing: false
+      ml_inference: false
+      marketplace_sell: false
+
+  pro:
+    name: Pro
+    price_usd_monthly: 299
+    limits:
+      scrape_requests_per_day: 500
+      max_pages_per_job: 200
+      max_concurrency: 10
+      storage_gb: 25
+    features:
+      scrapers: [rest, websocket, crawlee, crawlee_playwright]
+      ai_scrape_planner: true
+      proxy: true
+      proxy_tier: standard
+      dedicated_kafka_topic: true
+      ai_agents: [scrape_planner, discovery, processing]
+      flink_processing: true
+      ml_inference: true
+      marketplace_sell: false
+
+  enterprise:
+    name: Enterprise
+    price_usd_monthly: 1499
+    limits:
+      scrape_requests_per_day: 10000
+      max_pages_per_job: 5000
+      max_concurrency: 50
+      storage_gb: 500
+    features:
+      scrapers: [rest, websocket, crawlee, crawlee_playwright, selenium]
+      ai_scrape_planner: true
+      proxy: true
+      proxy_tier: premium
+      dedicated_kafka_topic: true
+      dedicated_environment: true
+      ai_agents: [strategy, discovery, processing, config, scrape_planner]
+      flink_processing: true
+      ml_inference: true
+      marketplace_sell: true
+      gitops_deploy: true
+
+default_plan: starter

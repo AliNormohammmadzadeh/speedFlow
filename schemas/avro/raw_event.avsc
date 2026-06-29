@@ -1,0 +1,18 @@
+{
+  "type": "record",
+  "name": "RawEvent",
+  "namespace": "com.speedflow.events",
+  "doc": "Raw data payload from AI-directed scrapers",
+  "fields": [
+    {"name": "event_id", "type": "string", "doc": "Unique event identifier"},
+    {"name": "source_id", "type": "string", "doc": "Scraper/source identifier"},
+    {"name": "source_type", "type": {"type": "enum", "name": "SourceType", "symbols": ["rest", "websocket", "crawlee", "selenium"]}},
+    {"name": "vertical", "type": "string", "doc": "Business vertical (gaming_esports, financial_markets, etc.)"},
+    {"name": "event_type", "type": "string"},
+    {"name": "timestamp", "type": "long", "logicalType": "timestamp-millis"},
+    {"name": "url", "type": ["null", "string"], "default": null},
+    {"name": "payload", "type": "string", "doc": "JSON-encoded raw payload"},
+    {"name": "metadata", "type": {"type": "map", "values": "string"}, "default": {}},
+    {"name": "value_score", "type": ["null", "double"], "default": null, "doc": "AI-assigned source value score"}
+  ]
+}

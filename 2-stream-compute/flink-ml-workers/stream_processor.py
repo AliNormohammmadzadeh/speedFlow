@@ -1,0 +1,129 @@
+"""Kafka stream processor: raw_stream -> stateful processing -> processed_stream."""
+
+import json
+import logging
+import os
+import signal
+import sys
+import time
+import uuid
+from collections import defaultdict
+from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(__file__))
+from shared.kafka_avro import create_consumer, create_processed_producer, register_schemas
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [processor] %(message)s")
+logger = logging.getLogger(__name__)
+
+_state: dict[str, list[float]] = defaultdict(list)
+_running = True
+
+
+def handle_signal(sig, frame):
+    global _running
+    _running = False
+
+
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
+
+
+def extract_numeric_features(payload: dict) -> dict[str, float]:
+    features = {}
+    if isinstance(payload, dict):
+        for key, val in payload.items():
+            if isinstance(val, (int, float)):
+                features[key] = float(val)
+            elif isinstance(val, str):
+                try:
+                    features[key] = float(val)
+                except ValueError:
+                    pass
+        if "price" in payload:
+            features["price"] = float(payload["price"])
+        if "p" in payload:
+            features["price"] = float(payload["p"])
+        if "q" in payload:
+            features["quantity"] = float(payload["q"])
+    return features
+
+
+def compute_rolling_stats(source_id: str, price: float) -> dict[str, float]:
+    window = _state[source_id]
+    window.append(price)
+    if len(window) > 100:
+        window.pop(0)
+    avg = sum(window) / len(window)
+    momentum = (price - window[0]) / window[0] if window[0] else 0.0
+    return {"rolling_avg": avg, "momentum": momentum, "window_size": len(window)}
+
+
+def process_event(raw: dict) -> dict:
+    payload_str = raw.get("payload", "{}")
+    try:
+        payload = json.loads(payload_str) if isinstance(payload_str, str) else payload_str
+    except json.JSONDecodeError:
+        payload = {"raw": payload_str}
+
+    features = extract_numeric_features(payload)
+    strategy = "simple_aggregation"
+
+    if features.get("price"):
+        stats = compute_rolling_stats(raw["source_id"], features["price"])
+        features.update(stats)
+        strategy = "flink_stateful"
+
+    predictions = {}
+    if "momentum" in features:
+        signal_val = "buy" if features["momentum"] > 0.01 else "sell" if features["momentum"] < -0.01 else "hold"
+        predictions["signal"] = signal_val
+        predictions["momentum"] = str(features["momentum"])
+
+    return {
+        "event_id": raw.get("event_id", str(uuid.uuid4())),
+        "source_id": raw["source_id"],
+        "vertical": raw.get("vertical", "unknown"),
+        "event_type": f"processed_{raw.get('event_type', 'event')}",
+        "timestamp": raw.get("timestamp", int(time.time() * 1000)),
+        "processed_at": int(datetime.now(timezone.utc).timestamp() * 1000),
+        "features": features,
+        "predictions": predictions,
+        "confidence": min(abs(features.get("momentum", 0)) * 10, 1.0) if features else None,
+        "processing_strategy": strategy,
+        "payload": json.dumps({"original": payload, "features": features, "predictions": predictions}),
+    }
+
+
+def main():
+    raw_topic = os.environ.get("KAFKA_RAW_TOPIC", "raw_stream")
+    processed_topic = os.environ.get("KAFKA_PROCESSED_TOPIC", "processed_stream")
+
+    try:
+        register_schemas()
+    except Exception as exc:
+        logger.warning("Schema registration skipped: %s", exc)
+
+    consumer = create_consumer([raw_topic], "speedflow-stream-processor", "raw_event.avsc")
+    producer = create_processed_producer()
+
+    logger.info("Stream processor started: %s -> %s", raw_topic, processed_topic)
+
+    while _running:
+        records = consumer.poll(timeout_ms=1000)
+        for tp, messages in records.items():
+            for msg in messages:
+                try:
+                    raw = msg.value if hasattr(msg, "value") and not isinstance(msg, dict) else msg.get("value", msg)
+                    processed = process_event(raw)
+                    producer.send(processed_topic, key=processed["source_id"], value=processed)
+                    producer.flush()
+                    logger.info("Processed event %s strategy=%s", processed["event_id"], processed["processing_strategy"])
+                except Exception as e:
+                    logger.error("Processing error: %s", e)
+
+    consumer.close()
+
+
+if __name__ == "__main__":
+    main()

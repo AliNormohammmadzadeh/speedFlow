@@ -1,0 +1,65 @@
+# Phase 1: Primary Verticals (first 2-3 target industries)
+
+version: "1.0"
+
+verticals:
+  gaming_esports:
+    id: gaming_esports
+    name: "Gaming & Esports"
+    priority: 1
+    description: "Live match odds, player stats, tournament schedules, skin/market prices"
+    reference_pipelines:
+      - raw_topic: raw_stream
+        processed_topic: processed_stream
+        flink_job: esports_odds_aggregator
+        ml_model: price_momentum_lstm
+    seed_sources:
+      - name: hltv_match_feed
+        type: rest
+        url: "https://www.hltv.org/api/matches"
+        value_score: 0.85
+      - name: opgg_websocket
+        type: websocket
+        url: "wss://op.gg/live"
+        value_score: 0.72
+    target_apps: [trading_bot, meta_dashboard]
+
+  financial_markets:
+    id: financial_markets
+    name: "Financial Markets"
+    priority: 2
+    description: "Equity/crypto prices, order book depth, macro indicators"
+    reference_pipelines:
+      - raw_topic: raw_stream
+        processed_topic: processed_stream
+        flink_job: market_signal_processor
+        ml_model: volatility_predictor
+    seed_sources:
+      - name: binance_rest_ticker
+        type: rest
+        url: "https://api.binance.com/api/v3/ticker/price"
+        value_score: 0.90
+      - name: binance_websocket_depth
+        type: websocket
+        url: "wss://stream.binance.com:9443/ws/btcusdt@depth"
+        value_score: 0.88
+    target_apps: [trading_bot, data_marketplace]
+
+  accommodation_travel:
+    id: accommodation_travel
+    name: "Accommodation & Travel"
+    priority: 3
+    description: "Hotel/Airbnb pricing, availability, review sentiment"
+    reference_pipelines:
+      - raw_topic: raw_stream
+        processed_topic: processed_stream
+        flink_job: price_normalizer
+        ml_model: demand_forecast
+    seed_sources:
+      - name: booking_search_crawler
+        type: crawlee
+        url: "https://www.booking.com/searchresults.html"
+        value_score: 0.78
+    target_apps: [accommodation_aggregator, meta_dashboard]
+
+default_vertical: gaming_esports

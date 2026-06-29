@@ -1,0 +1,16 @@
+sources:
+  - id: binance_btc_ticker
+    type: rest
+    vertical: financial_markets
+    url: "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+    interval_seconds: 10
+    event_type: market_ticker
+    enabled: true
+
+  - id: coingecko_eth
+    type: rest
+    vertical: financial_markets
+    url: "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd"
+    interval_seconds: 30
+    event_type: market_ticker
+    enabled: true

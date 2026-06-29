@@ -1,0 +1,9 @@
+sources:
+  - id: example_selenium_page
+    type: selenium
+    vertical: accommodation_travel
+    url: "https://httpbin.org/html"
+    interval_seconds: 600
+    event_type: rendered_page
+    enabled: false
+    wait_selector: "h1"

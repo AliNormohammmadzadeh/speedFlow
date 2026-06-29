@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background: #08080f;
+  background-image:
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(34, 211, 238, 0.08), transparent),
+    radial-gradient(ellipse 60% 50% at 90% 10%, rgba(167, 139, 250, 0.1), transparent),
+    radial-gradient(ellipse 50% 40% at 50% 100%, rgba(244, 114, 182, 0.06), transparent);
+  min-height: 100vh;
+}
+
+@layer components {
+  .glass {
+    @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl;
+  }
+  .glass-hover {
+    @apply glass transition-all duration-300 hover:border-accent-cyan/30 hover:bg-white/[0.06];
+  }
+  .status-up { @apply bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/40; }
+  .status-down { @apply bg-red-500/20 text-red-300 ring-1 ring-red-500/40; }
+  .status-degraded { @apply bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/40; }
+  .gradient-text {
+    @apply bg-gradient-to-r from-accent-cyan via-accent-violet to-accent-pink bg-clip-text text-transparent;
+  }
+
+  .btn-icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white/70 transition-all duration-200 hover:border-accent-cyan/40 hover:bg-white/10 hover:text-white hover:shadow-lg hover:shadow-accent-cyan/10 active:scale-95;
+  }
+
+  .nav-link {
+    @apply relative flex items-center gap-3 overflow-hidden rounded-xl px-3 py-3 text-white/60 transition-all duration-200;
+  }
+  .nav-link::before {
+    content: '';
+    @apply absolute inset-y-2 left-0 w-0.5 scale-y-0 rounded-full bg-accent-cyan transition-transform duration-200;
+  }
+  .nav-link:hover {
+    @apply bg-white/[0.06] text-white shadow-lg shadow-accent-cyan/5;
+    transform: translateX(3px);
+  }
+  .nav-link:hover::before {
+    @apply scale-y-100;
+  }
+  .nav-link:hover .nav-link-icon {
+    @apply bg-gradient-to-br from-accent-cyan/30 to-accent-violet/30 text-white shadow-md shadow-accent-cyan/20;
+    transform: scale(1.08);
+  }
+  .nav-link:hover .nav-link-desc {
+    @apply text-accent-cyan/70;
+  }
+  .nav-link:hover .nav-link-chevron {
+    @apply translate-x-1 text-accent-cyan/60 opacity-100;
+  }
+  .nav-link-active {
+    @apply bg-gradient-to-r from-accent-cyan/15 to-accent-violet/15 text-white ring-1 ring-accent-cyan/25;
+  }
+  .nav-link-active::before {
+    @apply scale-y-100;
+  }
+  .nav-link-active .nav-link-icon {
+    @apply bg-gradient-to-br from-accent-cyan to-accent-violet text-white;
+  }
+  .nav-link-collapsed {
+    @apply justify-center px-2;
+  }
+  .nav-link-icon {
+    @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/5 transition-all duration-200;
+  }
+
+  .clickable-card {
+    @apply cursor-pointer transition-all duration-200 hover:border-accent-cyan/35 hover:bg-white/[0.07] hover:shadow-xl hover:shadow-accent-cyan/10 active:scale-[0.99];
+  }
+
+  .clickable-row {
+    @apply flex items-center justify-between gap-3 rounded-xl bg-white/5 px-3 py-2.5 text-left text-sm transition-all duration-200 hover:border hover:border-accent-cyan/25 hover:bg-white/[0.08] hover:shadow-md hover:shadow-accent-cyan/5;
+  }
+  .clickable-row:hover .clickable-row-chevron {
+    @apply translate-x-0.5 text-accent-cyan/70 opacity-100;
+  }
+
+  .pipeline-node {
+    @apply glass-hover cursor-pointer p-4 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl hover:shadow-violet-500/10 active:scale-[0.98];
+  }
+
+  .clickable-table-row {
+    @apply cursor-pointer transition-colors duration-150 hover:bg-white/[0.06];
+  }
+
+  .input-field {
+    @apply w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm outline-none transition focus:border-accent-cyan/50 focus:ring-1 focus:ring-accent-cyan/20;
+  }
+
+  .btn-action-primary {
+    @apply rounded-xl bg-gradient-to-r from-accent-cyan to-accent-violet py-2.5 text-sm font-semibold text-white shadow-lg shadow-accent-cyan/20 transition hover:opacity-90 hover:shadow-accent-cyan/30 active:scale-[0.98] disabled:opacity-50;
+  }
+
+  .btn-action-secondary {
+    @apply rounded-xl border border-accent-cyan/40 bg-accent-cyan/10 py-2.5 text-sm font-semibold text-accent-cyan transition hover:bg-accent-cyan/20 active:scale-[0.98];
+  }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.28s ease-out;
+}
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
