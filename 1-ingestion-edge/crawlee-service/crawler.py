@@ -107,7 +107,11 @@ async def run_crawlee_job(
     results_count = 0
     seen_domains = {urlparse(u).netloc for u in seed_urls}
 
-    concurrency = ConcurrencySettings(max_concurrency=max_concurrency)
+    desired_concurrency = min(int(job.get("desired_concurrency", max_concurrency)), max_concurrency)
+    concurrency = ConcurrencySettings(
+        max_concurrency=max_concurrency,
+        desired_concurrency=max(1, desired_concurrency),
+    )
     crawler_kwargs: dict[str, Any] = {
         "max_requests_per_crawl": max_requests,
         "max_crawl_depth": max_depth,

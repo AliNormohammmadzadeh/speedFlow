@@ -279,6 +279,7 @@ services:
     build:
       context: .
       dockerfile: 1-ingestion-edge/crawlee-service/Dockerfile
+    container_name: platform-crawlee-worker
     depends_on:
       kafka-init:
         condition: service_completed_successfully

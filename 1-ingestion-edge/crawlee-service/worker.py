@@ -130,7 +130,11 @@ def worker_loop():
 
     while _running:
         keys = queue_keys()
-        item = client.blpop(keys, timeout=5)
+        try:
+            item = client.blpop(keys, timeout=5)
+        except redis.exceptions.TimeoutError:
+            # redis-py raises on the blocking timeout instead of returning None
+            continue
         if not item:
             continue
         job = {}

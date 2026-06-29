@@ -31,7 +31,7 @@ orchestrate:
 		-d '{"business_goals":["maximize_revenue"],"run_bridges":true}' | python3 -m json.tool
 
 connectors:
-	bash scripts/register-connectors.sh
+	CONNECTOR_DIR=infra/kafka-connect KAFKA_CONNECT_URL=http://localhost:8083 bash scripts/register-connectors.sh
 
 schemas:
 	bash scripts/register-schemas.sh
