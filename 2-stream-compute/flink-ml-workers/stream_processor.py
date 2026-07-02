@@ -119,6 +119,9 @@ def process_event(raw: dict) -> dict:
 
 def main():
     raw_topic = os.environ.get("KAFKA_RAW_TOPIC", "raw_stream")
+    # Subscribe by regex so per-tenant dedicated topics (raw_stream_<tenant_id>)
+    # are consumed automatically as they are created, alongside the shared topic.
+    raw_pattern = os.environ.get("KAFKA_RAW_TOPIC_PATTERN", "^raw_stream.*")
     processed_topic = os.environ.get("KAFKA_PROCESSED_TOPIC", "processed_stream")
 
     try:
@@ -126,10 +129,11 @@ def main():
     except Exception as exc:
         logger.warning("Schema registration skipped: %s", exc)
 
-    consumer = create_consumer([raw_topic], "speedflow-stream-processor", "raw_event.avsc")
+    topics = [raw_pattern] if raw_pattern else [raw_topic]
+    consumer = create_consumer(topics, "speedflow-stream-processor", "raw_event.avsc")
     producer = create_processed_producer()
 
-    logger.info("Stream processor started: %s -> %s", raw_topic, processed_topic)
+    logger.info("Stream processor started: %s -> %s", topics, processed_topic)
 
     while _running:
         records = consumer.poll(timeout_ms=1000)
