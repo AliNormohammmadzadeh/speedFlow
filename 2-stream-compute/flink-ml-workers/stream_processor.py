@@ -6,6 +6,8 @@ import os
 import signal
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -15,6 +17,26 @@ from shared.kafka_avro import create_consumer, create_processed_producer, regist
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [processor] %(message)s")
 logger = logging.getLogger(__name__)
+
+SEARCH_URL = os.environ.get("ELASTICSEARCH_URL", "").rstrip("/")
+SEARCH_INDEX = os.environ.get("SEARCH_INDEX", "processed-events")
+
+
+def index_to_search(event: dict) -> None:
+    """App-level OpenSearch/Elasticsearch indexer (Connect ES sink rejects OpenSearch)."""
+    if not SEARCH_URL:
+        return
+    try:
+        body = json.dumps(event).encode("utf-8")
+        req = urllib.request.Request(
+            f"{SEARCH_URL}/{SEARCH_INDEX}/_doc/{event['event_id']}",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=5).read()
+    except Exception as exc:  # indexing is best-effort, never block the pipeline
+        logger.warning("Search indexing failed for %s: %s", event.get("event_id"), exc)
 
 _state: dict[str, list[float]] = defaultdict(list)
 _running = True
@@ -118,6 +140,7 @@ def main():
                     processed = process_event(raw)
                     producer.send(processed_topic, key=processed["source_id"], value=processed)
                     producer.flush()
+                    index_to_search(processed)
                     logger.info("Processed event %s strategy=%s", processed["event_id"], processed["processing_strategy"])
                 except Exception as e:
                     logger.error("Processing error: %s", e)

@@ -31,7 +31,14 @@ register_connector() {
 
 wait_for_connect || exit 1
 
+# Postgres JDBC sink: processed_stream -> processed_events table.
 register_connector "postgres-sink" "$CONNECTOR_DIR/postgres-sink.json"
-register_connector "elasticsearch-sink" "$CONNECTOR_DIR/elasticsearch-sink.json"
+
+# OpenSearch indexing is handled app-side by the stream processor
+# (the Confluent Elasticsearch sink rejects OpenSearch's version banner).
+# Set REGISTER_ES_SINK=true to also try the Connect Elasticsearch sink.
+if [ "${REGISTER_ES_SINK:-false}" = "true" ]; then
+  register_connector "elasticsearch-sink" "$CONNECTOR_DIR/elasticsearch-sink.json"
+fi
 
 echo "Connectors registered"

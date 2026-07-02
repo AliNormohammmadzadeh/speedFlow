@@ -2,15 +2,19 @@
   "connector.class": "io.confluent.connect.jdbc.JdbcSinkConnector",
   "tasks.max": "1",
   "topics": "processed_stream",
-  "connection.url": "jdbc:postgresql://postgres:5432/platform_db",
+  "connection.url": "jdbc:postgresql://postgres:5432/platform_db?stringtype=unspecified",
   "connection.user": "admin",
   "connection.password": "adminpassword",
   "auto.create": "false",
+  "auto.evolve": "false",
   "insert.mode": "upsert",
   "pk.mode": "record_value",
   "pk.fields": "event_id",
   "table.name.format": "processed_events",
   "key.converter": "org.apache.kafka.connect.storage.StringConverter",
-  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
-  "value.converter.schemas.enable": "false"
+  "value.converter": "io.confluent.connect.avro.AvroConverter",
+  "value.converter.schema.registry.url": "http://schema-registry:8081",
+  "transforms": "dropMaps",
+  "transforms.dropMaps.type": "org.apache.kafka.connect.transforms.ReplaceField$Value",
+  "transforms.dropMaps.exclude": "features,predictions"
 }
