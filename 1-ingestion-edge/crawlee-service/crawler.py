@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
@@ -17,6 +18,7 @@ try:
     from crawlee import ConcurrencySettings
     from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
     from crawlee.proxy_configuration import ProxyConfiguration
+    from crawlee.storages import RequestQueue
     CRAWLEE_AVAILABLE = True
 except ImportError:
     CRAWLEE_AVAILABLE = False
@@ -122,6 +124,12 @@ async def run_crawlee_job(
     if proxy_configuration:
         crawler_kwargs["proxy_configuration"] = proxy_configuration
 
+    # Isolate each job in its own RequestQueue so re-scraping the same URL in a
+    # later job is not silently deduped against a previous run (the worker uses a
+    # single long-lived process, so the default queue would persist across jobs).
+    request_queue = await RequestQueue.open(name=f"job-{job.get('job_id', uuid.uuid4().hex)}-{uuid.uuid4().hex[:8]}")
+    crawler_kwargs["request_manager"] = request_queue
+
     crawler = BeautifulSoupCrawler(**crawler_kwargs)
     start_urls = list(seed_urls)
 
@@ -171,7 +179,10 @@ async def run_crawlee_job(
                         continue
                     await context.add_requests([absolute])
 
-    await crawler.run(start_urls)
+    try:
+        await crawler.run(start_urls)
+    finally:
+        await request_queue.drop()
     return {"pages_crawled": results_count, "engine": "crawlee", "proxy": bool(proxy_configuration)}
 
 
@@ -193,6 +204,9 @@ async def _run_playwright_job(
     }
     if proxy_configuration:
         crawler_kwargs["proxy_configuration"] = proxy_configuration
+
+    request_queue = await RequestQueue.open(name=f"job-{job.get('job_id', uuid.uuid4().hex)}-{uuid.uuid4().hex[:8]}")
+    crawler_kwargs["request_manager"] = request_queue
 
     crawler = PlaywrightCrawler(**crawler_kwargs)
 
@@ -216,7 +230,10 @@ async def _run_playwright_job(
         if on_progress:
             on_progress(results_count, None)
 
-    await crawler.run(seed_urls)
+    try:
+        await crawler.run(seed_urls)
+    finally:
+        await request_queue.drop()
     return {"pages_crawled": results_count, "engine": "playwright", "proxy": bool(proxy_configuration)}
 
 

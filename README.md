@@ -16,10 +16,12 @@ The platform targets three business verticals out of the box: **Gaming & Esports
 | **Pipeline workers (host)** | Crawlee worker + stream processor via `make start-pipeline` |
 | **Control portal** | React UI at :8030 — burger sidebar, clickable services/jobs, detail drawer with logs |
 | **Near-term roadmap (items 1–6)** | Done (Connect image, Selenium/Playwright, quotas, job status, Avro, UI) |
-| **Full Docker stack** | Not fully validated (`make up` — some images need stable Docker Hub pulls) |
-| **Serving apps (8010–8014)** | Not started in local-dev path; show as down in UI |
-| **Kafka Connect sinks** | Image exists; connectors not registered until Connect container runs |
-| **Flink / Airflow / ML in prod path** | Scaffolded; not wired end-to-end |
+| **Full Docker stack (Path B)** | Working: `make up` builds + runs all ~22 services; `make health` all green (12/12 in portal) |
+| **Serving apps (8010–8014)** | Run under `make up`; portal shows them green |
+| **Kafka Connect sinks** | Postgres JDBC sink registered via `make connectors`; writes `processed_stream` → `processed_events` |
+| **Search indexing** | Stream processor indexes `processed_events` into OpenSearch; Dashboard reports `events_indexed` |
+| **Phase 2 — Full stack parity** | Done (see [Next Phases](#next-phases--mandatory-todo-list)) |
+| **Flink / Airflow in prod path** | Scaffolded; not wired end-to-end (Phase 3) |
 
 **Recommended dev path:** `make install-local-deps` → `make start-local` → `make pipeline-test` → open http://localhost:8030
 
@@ -140,32 +142,50 @@ make stop-local
 
 ---
 
-### Path B — Full Docker stack
+### Path B — Full Docker stack (verified end-to-end)
+
+Runs **everything** in Docker: infra, AI orchestrator, platform API, all five serving apps
+(8010–8014), the Crawlee worker, stream processor, scrapers, Kafka Connect, and the portal —
+all wired with internal service URLs and **Avro on the wire** (`USE_AVRO=true`).
 
 ```bash
 # 1. Clone and configure
 cp .env.example .env
 
-# 2. Build and start all ~25 services
+# 2. Build and start the full stack (pre-pulls images, builds sequentially, then `up -d`)
 make up
 
-# 3. Wait ~60s, then verify health
+# 3. Wait ~60s, then verify health (all services green)
 make health
 
-# 4. Register Kafka topics schemas and Connect sinks
-make schemas
+# 4. Register the Postgres JDBC sink (processed_stream → processed_events)
 make connectors
 
-# 5. Create a tenant and submit a scrape
+# 5. Run the full end-to-end test:
+#    tenant → scrape → Crawlee → raw_stream → stream processor →
+#    processed_stream → Postgres sink + OpenSearch index → dashboard
+make path-b
+
+# 6. (Optional) Create a tenant / submit a scrape / run an AI cycle manually
 make tenant-create
 API_KEY=sf_xxx make scrape-request
-
-# 6. Run AI orchestration cycle
 make orchestrate
 
-# 7. Open portal
+# 7. Open portal (shows 12/12 services up, live Docker logs)
 make portal   # → http://localhost:8030
 ```
+
+**Notes on the Docker pipeline:**
+
+- The stream processor, Crawlee worker, and scrapers all run as containers — scrape jobs complete
+  **without** any host workers.
+- `processed_stream` is serialized with Avro; the Connect JDBC sink uses the `AvroConverter` and a
+  `ReplaceField` transform (drops the `features`/`predictions` maps) to upsert into `processed_events`.
+- OpenSearch indexing is done **app-side** by the stream processor (the Confluent Elasticsearch sink
+  rejects OpenSearch's version banner). Set `REGISTER_ES_SINK=true make connectors` to also try the
+  Connect ES sink against a real Elasticsearch.
+- The portal reads **container logs** (not host `/tmp` logs) when `USE_DOCKER_LOGS=true` (default for
+  the `ui-portal` service).
 
 **Scale Crawlee workers:**
 
@@ -192,7 +212,9 @@ docker compose logs -f platform-api ai-orchestrator crawlee-worker
 
 | Target | Description |
 |--------|-------------|
-| `make up` / `make down` | Full Docker Compose stack |
+| `make up` / `make down` | Full Docker Compose stack (`up` pre-pulls + builds sequentially, then starts) |
+| `make up-fast` | Full stack with parallel build (warm caches) |
+| `make path-b` | Full Docker E2E: tenant → scrape → Connect → Postgres + OpenSearch → dashboard |
 | `make start-local` | Infra in Docker + apps + pipeline on host |
 | `make start-apps` | Platform API, orchestrator, portal only |
 | `make start-pipeline` | Crawlee worker + stream processor only |
@@ -642,7 +664,7 @@ These areas exist as scaffolding, partial wiring, or MVP stubs. Items marked **P
 
 | Gap | Current State | Needed | Phase |
 |-----|---------------|--------|-------|
-| Full Docker scrapers | REST/WS/Selenium images built but not in local-dev path | Run all scraper containers under `make up`; validate YAML sources | 2 |
+| Full Docker scrapers | **Done (Phase 2)** — REST/WS/Selenium + Crawlee run under `make up` | Validate YAML sources end-to-end against live feeds | 3 |
 | Airflow child DAGs | Parent DAG logs sources only | DAGs that enqueue scraper jobs and monitor Kafka lag | 3 |
 | Per-tenant Kafka topics | Pro/Enterprise flag in plans; worker uses `raw_stream` by default | Auto-create `raw_stream_{tenant_id}` + consumer routing when `dedicated_kafka_topic` | 3 |
 | Playwright in host worker | BeautifulSoup/fallback on host | `playwright install chromium` in `install-local-deps` or Docker-only crawls | 2 |
@@ -651,8 +673,8 @@ These areas exist as scaffolding, partial wiring, or MVP stubs. Items marked **P
 
 | Gap | Current State | Needed | Phase |
 |-----|---------------|--------|-------|
-| Kafka Connect running | Custom image + configs exist | Start Connect container; `make connectors`; verify Postgres + OpenSearch sinks | 2 |
-| Events in OpenSearch | Stream processor publishes to Kafka | Connect ES sink or app-level indexer; Dashboard reads live counts | 2 |
+| Kafka Connect running | **Done (Phase 2)** — Connect container runs; `make connectors` registers the Postgres JDBC sink (Avro) → `processed_events` | Tune sink for per-tenant routing | 3 |
+| Events in OpenSearch | **Done (Phase 2)** — stream processor indexes `processed_events`; Dashboard reads live `events_indexed` | Real ES aggregations + time-series charts | 3 |
 | Flink jobs | PyFlink script exists; not submitted | Custom Flink image; submit `raw_to_processed.py`; retire in-memory processor for stateful workloads | 3 |
 | Stream processor state | In-memory rolling window on host | Flink state backend or RocksDB for fault tolerance | 3 |
 | ML service | sklearn MVP in Docker | GPU models, model registry, Processing Agent hot-swap | 3 |
@@ -661,7 +683,7 @@ These areas exist as scaffolding, partial wiring, or MVP stubs. Items marked **P
 
 | Gap | Current State | Needed | Phase |
 |-----|---------------|--------|-------|
-| Full `make up` validation | Local path works; full stack intermittent | CI/build cache; pre-pull images; document single-command prod-like dev | 2 |
+| Full `make up` validation | **Done (Phase 2)** — pre-pull + sequential build; full stack verified via `make path-b` | CI build cache for faster cold starts | 3 |
 | Billing / metering | Plan prices in YAML | Usage tracking, invoicing integration | 4 |
 | Auth beyond API keys | `X-API-Key` header | OAuth2, RBAC, tenant admin roles in UI | 4 |
 
@@ -669,12 +691,12 @@ These areas exist as scaffolding, partial wiring, or MVP stubs. Items marked **P
 
 | Gap | Current State | Needed | Phase |
 |-----|---------------|--------|-------|
-| All serving apps up | 8010–8014 down in local dev | Include in `make up`; portal shows green health | 2 |
+| All serving apps up | **Done (Phase 2)** — 8010–8014 run under `make up`; portal shows green health | Replace MVP data with live queries | 3 |
 | Aggregator | Hard-coded sample hotels | Query Postgres/ES for live accommodation data | 3 |
 | Dashboard | Mock KPIs when ES empty | Real ES aggregations, time-series charts in UI | 3 |
 | Marketplace | In-memory orders | Postgres persistence, payment gateway, API key delivery | 4 |
 | Auditing | In-memory log | Writes to `audit_log` table, retention policies | 3 |
-| Trading Bot | Simple momentum signals | Risk rules, backtesting; consume live `processed_stream` in Docker | 2 |
+| Trading Bot | **Phase 2 done** — consumes live Avro `processed_stream` in Docker, emits buy/sell signals to UI | Risk rules, backtesting | 4 |
 
 ### Infrastructure & Production
 
@@ -705,16 +727,16 @@ All items below **must** be completed in order within each phase before moving t
 
 Goal: One command (`make up`) runs everything; data persists to DB + search; all UI services green.
 
-- [ ] **2.1** Stabilize `make up` — fix Docker build/pull failures; add image pre-pull script or CI cache
-- [ ] **2.2** Start **Kafka Connect** container; run `make connectors`; verify JDBC sink → `processed_events` in Postgres
-- [ ] **2.3** Verify **OpenSearch sink** indexes events; Dashboard :8013 returns non-zero `events_indexed`
-- [ ] **2.4** Run **all serving apps** (8010–8014) in Compose; `make health` all green
-- [ ] **2.5** Run **crawlee-worker**, **stream-processor**, **scrapers** in Docker (not only host); scrape jobs complete without host workers
-- [ ] **2.6** Run **ui-portal** in Docker with internal service URLs; parity with host portal
-- [ ] **2.7** **Trading bot** consumes `processed_stream` in Docker and exposes live signals in UI
-- [ ] **2.8** Add **`kafka-init`** to `start-local` reliably (topics always exist on fresh start)
-- [ ] **2.9** Document and test **Path B** end-to-end in README quick start (tenant → scrape → Connect → dashboard)
-- [ ] **2.10** Portal: show Docker container logs (not only host `/tmp` logs) when running full stack
+- [x] **2.1** Stabilize `make up` — pre-pull base images + sequential builds with retries (`make pre-pull` / `make build-seq`); fixed the Kafka Connect image user (`appuser`)
+- [x] **2.2** Start **Kafka Connect** container; run `make connectors`; JDBC sink upserts `processed_stream` → `processed_events` (Avro converter + `ReplaceField` SMT + `stringtype=unspecified`)
+- [x] **2.3** Stream processor indexes events into **OpenSearch**; Dashboard :8013 returns non-zero `events_indexed`
+- [x] **2.4** All serving apps (8010–8014) run in Compose; `make health` all green (12/12 in portal)
+- [x] **2.5** **crawlee-worker**, **stream-processor**, **scrapers** run in Docker; scrape jobs complete without host workers
+- [x] **2.6** **ui-portal** runs in Docker with internal service URLs; parity with host portal
+- [x] **2.7** **Trading bot** consumes Avro `processed_stream` in Docker and exposes live buy/sell signals in UI
+- [x] **2.8** `start-local` waits for Kafka health then runs `kafka-init` (topics always exist on fresh start)
+- [x] **2.9** **Path B** documented and tested end-to-end via `make path-b` (tenant → scrape → Connect → dashboard)
+- [x] **2.10** Portal shows Docker container logs (not only host `/tmp` logs) when `USE_DOCKER_LOGS=true`
 
 ### Phase 3 — Production-grade data plane **REQUIRED**
 

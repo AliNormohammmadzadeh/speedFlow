@@ -57,7 +57,7 @@ def _sync_job_status(client: redis.Redis, job_id: str, **fields) -> None:
     update_scrape_job(job_id, **fields)
 
 
-def process_job(job: dict, producer) -> dict:
+async def process_job(job: dict, producer) -> dict:
     tenant_id = job.get("tenant_id", "platform")
     job_id = job.get("job_id", job.get("source_id", "unknown"))
     vertical = job.get("vertical") or "unknown"
@@ -111,7 +111,7 @@ def process_job(job: dict, producer) -> dict:
         stats.update(crawl_stats)
         return stats
 
-    stats = asyncio.run(execute())
+    stats = await execute()
     _sync_job_status(
         client, job_id,
         status="completed",
@@ -123,7 +123,12 @@ def process_job(job: dict, producer) -> dict:
     return stats
 
 
-def worker_loop():
+async def worker_loop():
+    # A single long-lived event loop is used for the whole worker so that
+    # Crawlee's process-global storage client (whose asyncio.Lock is bound to
+    # the loop on first use) stays valid across multiple jobs. Calling
+    # asyncio.run() per job would bind that lock to a loop that is then closed,
+    # crashing every job after the first with "bound to a different event loop".
     client = get_redis()
     producer = create_producer()
     logger.info("Crawlee worker %s started", WORKER_ID)
@@ -131,7 +136,7 @@ def worker_loop():
     while _running:
         keys = queue_keys()
         try:
-            item = client.blpop(keys, timeout=5)
+            item = await asyncio.to_thread(client.blpop, keys, 5)
         except redis.exceptions.TimeoutError:
             # redis-py raises on the blocking timeout instead of returning None
             continue
@@ -143,7 +148,7 @@ def worker_loop():
             job = json.loads(raw)
             job_id = job.setdefault("job_id", job.get("source_id", f"job-{WORKER_ID}"))
             _sync_job_status(client, job_id, status="running", progress_pct=0, pages_crawled=0)
-            process_job(job, producer)
+            await process_job(job, producer)
         except Exception as e:
             logger.exception("Job failed: %s", e)
             job_id = job.get("job_id", "unknown")
@@ -156,4 +161,4 @@ def worker_loop():
 
 
 if __name__ == "__main__":
-    worker_loop()
+    asyncio.run(worker_loop())
