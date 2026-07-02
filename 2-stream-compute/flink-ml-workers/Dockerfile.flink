@@ -1,0 +1,16 @@
+# Custom Flink image with PyFlink + the Kafka connector so raw_to_processed.py
+# can run stateful window jobs on the cluster (Phase 3.1).
+FROM flink:1.18-scala_2.12-java11
+
+# Python + PyFlink (Flink 1.18 supports Python 3.8-3.10; jammy base = 3.10).
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-pip curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+RUN pip3 install --no-cache-dir apache-flink==1.18.1
+
+# Unified Kafka connector (DataStream KafkaSource/KafkaSink) for Flink 1.18.
+ADD https://repo1.maven.org/maven2/org/apache/flink/flink-sql-connector-kafka/3.1.0-1.18/flink-sql-connector-kafka-3.1.0-1.18.jar \
+    /opt/flink/lib/flink-sql-connector-kafka-3.1.0-1.18.jar
+RUN chmod 644 /opt/flink/lib/flink-sql-connector-kafka-3.1.0-1.18.jar

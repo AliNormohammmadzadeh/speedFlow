@@ -1,0 +1,43 @@
+# Flink overlay: run the JobManager/TaskManager on a custom PyFlink image and
+# submit the stateful-window job. Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.flink.yml up -d --build \
+#     flink-jobmanager flink-taskmanager flink-job-submitter
+services:
+  flink-jobmanager:
+    build:
+      context: ./2-stream-compute/flink-ml-workers
+      dockerfile: Dockerfile.flink
+    image: speedflow-flink-pyflink
+
+  flink-taskmanager:
+    build:
+      context: ./2-stream-compute/flink-ml-workers
+      dockerfile: Dockerfile.flink
+    image: speedflow-flink-pyflink
+
+  flink-job-submitter:
+    image: speedflow-flink-pyflink
+    container_name: flink-job-submitter
+    depends_on:
+      - flink-jobmanager
+      - flink-taskmanager
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      FLINK_INPUT_TOPIC: flink_input
+      FLINK_OUTPUT_TOPIC: flink_windowed
+      FLINK_WINDOW_SECONDS: "10"
+    volumes:
+      - ./2-stream-compute/flink-ml-workers/flink-jobs:/opt/flink/usrlib:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+        echo "waiting for Flink JobManager REST..."
+        for i in $(seq 1 60); do
+          if curl -sf http://flink-jobmanager:8081/overview >/dev/null 2>&1; then break; fi
+          sleep 3
+        done
+        echo "submitting PyFlink stateful-window job..."
+        flink run -d -m flink-jobmanager:8081 -py /opt/flink/usrlib/raw_to_processed.py
+        echo "submitted; job should appear RUNNING in the Flink dashboard"
+    restart: "no"

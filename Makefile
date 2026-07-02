@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -62,6 +62,11 @@ pipeline-test:
 
 path-b:
 	bash scripts/path-b-e2e.sh
+
+# Submit the PyFlink stateful-window job to the Flink cluster (custom PyFlink image)
+flink-job:
+	docker compose -f docker-compose.yml -f docker-compose.flink.yml up -d --build flink-jobmanager flink-taskmanager flink-job-submitter
+	@echo "Flink dashboard: http://localhost:8082 — look for 'raw_to_processed_windowed'"
 
 # Optional Airflow stack (:8080, admin/admin) — parent + child ingestion DAGs
 up-airflow:
