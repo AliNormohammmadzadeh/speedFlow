@@ -55,6 +55,54 @@ def metrics_overview():
     }
 
 
+@app.get("/metrics/timeseries")
+def metrics_timeseries(hours: int = Query(24), bucket_minutes: int = Query(60), vertical: str = Query("")):
+    """ES histogram of processed events over time (buckets of `bucket_minutes`)."""
+    es_url = os.environ.get("ELASTICSEARCH_URL", "http://elasticsearch:9200")
+    now_ms = int(__import__("time").time() * 1000)
+    since_ms = now_ms - hours * 3600 * 1000
+    bucket_ms = max(1, bucket_minutes) * 60 * 1000
+    must: list[dict] = [{"range": {"processed_at": {"gte": since_ms}}}]
+    if vertical:
+        must.append({"term": {"vertical.keyword": vertical}})
+    # `processed_at` is indexed as epoch-millis (numeric), so use a numeric
+    # histogram aggregation rather than date_histogram (avoids date-mapping needs).
+    body = {
+        "size": 0,
+        "query": {"bool": {"must": must}},
+        "aggs": {"events_over_time": {"histogram": {"field": "processed_at", "interval": bucket_ms, "min_doc_count": 0}}},
+    }
+    buckets = []
+    try:
+        import httpx
+        with httpx.Client(timeout=5) as client:
+            resp = client.post(f"{es_url}/processed-events/_search", json=body)
+            if resp.status_code == 200:
+                for b in resp.json().get("aggregations", {}).get("events_over_time", {}).get("buckets", []):
+                    buckets.append({"ts": int(b["key"]), "count": b["doc_count"]})
+    except Exception as e:
+        logger.warning("ES timeseries failed: %s", e)
+    return {"bucket_minutes": bucket_minutes, "hours": hours, "series": buckets}
+
+
+@app.get("/metrics/by-vertical")
+def metrics_by_vertical():
+    """ES terms aggregation: event counts grouped by vertical."""
+    es_url = os.environ.get("ELASTICSEARCH_URL", "http://elasticsearch:9200")
+    body = {"size": 0, "aggs": {"by_vertical": {"terms": {"field": "vertical.keyword", "size": 20}}}}
+    result = []
+    try:
+        import httpx
+        with httpx.Client(timeout=5) as client:
+            resp = client.post(f"{es_url}/processed-events/_search", json=body)
+            if resp.status_code == 200:
+                for b in resp.json().get("aggregations", {}).get("by_vertical", {}).get("buckets", []):
+                    result.append({"vertical": b["key"], "count": b["doc_count"]})
+    except Exception as e:
+        logger.warning("ES by-vertical failed: %s", e)
+    return {"verticals": result}
+
+
 @app.get("/search")
 def search_events(q: str = Query(""), vertical: str = Query("")):
     es_url = os.environ.get("ELASTICSEARCH_URL", "http://elasticsearch:9200")

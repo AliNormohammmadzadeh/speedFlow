@@ -18,6 +18,8 @@ export const api = {
   tradingStats: () => fetchJson<any>('/trading/stats'),
   marketplaceProducts: () => fetchJson<any[]>('/marketplace/products'),
   dashboardMetrics: () => fetchJson<any>('/dashboard/metrics'),
+  dashboardTimeseries: () => fetchJson<any>('/dashboard/timeseries?hours=24&bucket_minutes=60'),
+  dashboardByVertical: () => fetchJson<any>('/dashboard/by-vertical'),
   connectors: () => fetchJson<any>('/connectors'),
   plans: () => fetchJson<any>('/plans'),
   schemas: () => fetchJson<any>('/schemas'),
