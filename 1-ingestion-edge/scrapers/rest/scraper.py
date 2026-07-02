@@ -62,7 +62,7 @@ def run_loop() -> None:
                     continue
                 event = scrape_source(client, source)
                 if event:
-                    publish_event(producer, event)
+                    publish_event(producer, event, topic=source.get("kafka_topic"))
                     logger.info("Published REST event from %s", source["id"])
                 last_run[source["id"]] = now
 

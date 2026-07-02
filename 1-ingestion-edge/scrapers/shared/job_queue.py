@@ -16,13 +16,27 @@ def get_redis() -> redis.Redis:
     return redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
 
+def _queue_keys(client: redis.Redis) -> list[str]:
+    """Global queue plus any per-tenant queues (scraper:jobs:{tenant_id})."""
+    keys = [QUEUE_KEY]
+    try:
+        for key in client.scan_iter(f"{QUEUE_KEY}:*"):
+            k = key.decode() if isinstance(key, bytes) else key
+            if k != QUEUE_KEY:
+                keys.append(k)
+    except Exception as exc:
+        logger.warning("tenant queue scan failed: %s", exc)
+    return keys
+
+
 def poll_dynamic_jobs(timeout: int = 5) -> list[dict]:
-    """Non-blocking poll for new AI-directed scraping targets."""
+    """Non-blocking poll for new AI-directed scraping targets across all queues."""
     client = get_redis()
     jobs = []
     for _ in range(10):
+        keys = _queue_keys(client)
         try:
-            item = client.blpop(QUEUE_KEY, timeout=timeout)
+            item = client.blpop(keys, timeout=timeout)
         except redis.exceptions.TimeoutError:
             # redis-py raises on the blocking timeout instead of returning None
             break
@@ -52,6 +66,10 @@ def merge_sources(static_sources: list[dict], dynamic_jobs: list[dict]) -> list[
             "event_type": job.get("event_type", "dynamic_scrape"),
             "enabled": True,
             "value_score": job.get("value_score"),
+            # Propagate per-tenant routing so AI-directed jobs land on the right
+            # (possibly dedicated) topic.
+            "kafka_topic": job.get("kafka_topic"),
+            "tenant_id": job.get("tenant_id"),
             "ai_directed": True,
         }
     return list(merged.values())
