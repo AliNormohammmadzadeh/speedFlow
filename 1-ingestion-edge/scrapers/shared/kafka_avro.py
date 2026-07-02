@@ -14,11 +14,17 @@ USE_AVRO = os.environ.get("USE_AVRO", "true").lower() in ("1", "true", "yes")
 
 
 def _schema_dir() -> Path:
-    for candidate in (
-        Path("/app/schemas/avro"),
-        Path(__file__).resolve().parents[3] / "schemas" / "avro",
-        Path(__file__).resolve().parents[2] / "schemas" / "avro",
-    ):
+    here = Path(__file__).resolve()
+    candidates: list[Path] = []
+    env_dir = os.environ.get("SCHEMA_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path("/app/schemas/avro"))
+    # Walk up the directory tree looking for a schemas/avro folder (works for
+    # both the deep host layout and the shallow /app layout inside images).
+    for parent in here.parents:
+        candidates.append(parent / "schemas" / "avro")
+    for candidate in candidates:
         if candidate.exists():
             return candidate
     return Path("/app/schemas/avro")

@@ -21,7 +21,11 @@ def poll_dynamic_jobs(timeout: int = 5) -> list[dict]:
     client = get_redis()
     jobs = []
     for _ in range(10):
-        item = client.blpop(QUEUE_KEY, timeout=timeout)
+        try:
+            item = client.blpop(QUEUE_KEY, timeout=timeout)
+        except redis.exceptions.TimeoutError:
+            # redis-py raises on the blocking timeout instead of returning None
+            break
         if not item:
             break
         _, raw = item
