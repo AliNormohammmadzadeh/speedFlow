@@ -1,0 +1,27 @@
+# Child Application: deploys the SpeedFlow platform workloads from k8s/.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: speedflow-platform
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/your-org/speedflow-gitops.git
+    targetRevision: main
+    path: infra/gitops/k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: speedflow
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        maxDuration: 3m
+        factor: 2
