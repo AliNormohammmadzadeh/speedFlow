@@ -106,6 +106,7 @@ class OrchestrationRequest(BaseModel):
     business_goals: list[str] = ["maximize_revenue"]
     feedback: list[dict] = []
     desired_state: dict = {}
+    required_outcomes: list[str] = []
     run_bridges: bool = True
 
 
@@ -146,7 +147,7 @@ async def orchestrate(req: OrchestrationRequest, background_tasks: BackgroundTas
     feedback = list(req.feedback) + load_recent_feedback()
     strategy_out = await strategy_agent.run(state, feedback=feedback)
     discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
-    processing_out = await processing_agent.run(state)
+    processing_out = await processing_agent.run(state, required_outcomes=req.required_outcomes or None)
     config_out = await config_agent.run(state, desired_state=req.desired_state or None)
 
     bridges_applied = None
