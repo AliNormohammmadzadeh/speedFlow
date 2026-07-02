@@ -19,10 +19,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from starlette.responses import Response
+
 from middleware import TenantQuotaMiddleware, enforce_daily_quota, get_daily_usage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Prometheus metrics (scraped at /metrics) ---
+TENANTS_CREATED = Counter("speedflow_tenants_created_total", "Tenants created", ["plan"])
+SCRAPES_SUBMITTED = Counter("speedflow_scrapes_submitted_total", "Scrape jobs submitted", ["plan"])
+SCRAPE_ERRORS = Counter("speedflow_scrape_errors_total", "Scrape submission errors")
 
 DATABASE_URL = (
     f"postgresql://{os.environ.get('POSTGRES_USER', 'admin')}:"
@@ -206,6 +214,11 @@ app.add_middleware(
     get_db_fn=get_db,
 )
 
+@app.get("/metrics")
+def metrics():
+    # Prometheus scrape endpoint (default process + custom counters above).
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 @app.get("/health")
 async def health():
@@ -232,6 +245,7 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
 
     plan = _plans[req.plan]
     features = plan.get("features", {})
+    TENANTS_CREATED.labels(plan=req.plan).inc()
 
     # Provision a dedicated per-tenant Kafka topic + schema for Pro/Enterprise.
     if features.get("dedicated_kafka_topic"):
@@ -318,8 +332,10 @@ async def request_scrape(
         )
         if resp.status_code != 200:
             await redis.decr(f"tenant:{tenant['tenant_id']}:scrape_count:{datetime.now(timezone.utc).strftime('%Y%m%d')}")
+            SCRAPE_ERRORS.inc()
             raise HTTPException(502, f"Scrape planner failed: {resp.text}")
         result = resp.json()
+    SCRAPES_SUBMITTED.labels(plan=tenant["plan"]).inc()
 
     job_id = result.get("job_id", "unknown")
     db.execute(

@@ -1,0 +1,49 @@
+# Observability overlay: Prometheus + Grafana + Kafka lag exporter.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d \
+#          prometheus grafana kafka-lag-exporter
+services:
+  kafka-lag-exporter:
+    build:
+      context: ./infra/observability/lag-exporter
+      dockerfile: Dockerfile
+    container_name: platform-kafka-lag-exporter
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      CONSUMER_GROUPS: speedflow-stream-processor
+      METRICS_PORT: "9110"
+    ports:
+      - "9110:9110"
+    depends_on:
+      - kafka
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: platform-prometheus
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: platform-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./infra/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./infra/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:

@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -62,6 +62,11 @@ pipeline-test:
 
 path-b:
 	bash scripts/path-b-e2e.sh
+
+# Observability stack: Prometheus (:9090) + Grafana (:3000, admin/admin) + Kafka lag exporter (:9110)
+observability:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build kafka-lag-exporter prometheus grafana
+	@echo "Prometheus: http://localhost:9090 | Grafana: http://localhost:3000 (admin/admin)"
 
 # Multi-tenant platform
 tenant-create:

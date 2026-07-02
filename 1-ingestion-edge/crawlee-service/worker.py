@@ -25,6 +25,18 @@ WORKER_ID = os.environ.get("WORKER_ID", "worker-1")
 GLOBAL_QUEUE = os.environ.get("CRAWLEE_QUEUE", "crawlee:jobs")
 _running = True
 
+# --- Prometheus metrics ---
+try:
+    from prometheus_client import Counter, start_http_server
+
+    JOBS_PROCESSED = Counter("speedflow_crawl_jobs_total", "Crawl jobs processed", ["status"])
+    PAGES_CRAWLED = Counter("speedflow_crawl_pages_total", "Pages crawled")
+    _METRICS = True
+except Exception:
+    _METRICS = False
+
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9309"))
+
 
 def queue_keys() -> list[str]:
     client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
@@ -131,6 +143,12 @@ async def worker_loop():
     # crashing every job after the first with "bound to a different event loop".
     client = get_redis()
     producer = create_producer()
+    if _METRICS:
+        try:
+            start_http_server(METRICS_PORT)
+            logger.info("Prometheus metrics on :%d/metrics", METRICS_PORT)
+        except Exception as exc:
+            logger.warning("metrics server failed: %s", exc)
     logger.info("Crawlee worker %s started", WORKER_ID)
 
     while _running:
@@ -148,9 +166,14 @@ async def worker_loop():
             job = json.loads(raw)
             job_id = job.setdefault("job_id", job.get("source_id", f"job-{WORKER_ID}"))
             _sync_job_status(client, job_id, status="running", progress_pct=0, pages_crawled=0)
-            await process_job(job, producer)
+            stats = await process_job(job, producer)
+            if _METRICS:
+                JOBS_PROCESSED.labels(status="completed").inc()
+                PAGES_CRAWLED.inc((stats or {}).get("pages_crawled", 0))
         except Exception as e:
             logger.exception("Job failed: %s", e)
+            if _METRICS:
+                JOBS_PROCESSED.labels(status="failed").inc()
             job_id = job.get("job_id", "unknown")
             _sync_job_status(
                 client, job_id,
