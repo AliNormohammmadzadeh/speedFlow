@@ -1,3 +1,4 @@
+import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
 import { Card, ClickableRow, PageHeader, usePoll } from '../components/ui'
 import { useDetail } from '../context/DetailContext'
@@ -8,8 +9,16 @@ export default function Applications() {
   const { data: stats } = usePoll(() => api.tradingStats())
   const { data: products } = usePoll(() => api.marketplaceProducts())
   const { data: metrics } = usePoll(() => api.dashboardMetrics())
+  const { data: timeseries } = usePoll(() => api.dashboardTimeseries())
+  const { data: byVertical } = usePoll(() => api.dashboardByVertical())
   const { data: overview } = usePoll(() => api.overview())
   const { openDetail } = useDetail()
+
+  const tsData = (timeseries?.series ?? []).map((b: any) => ({
+    time: new Date(b.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    count: b.count,
+  }))
+  const vData = (byVertical?.verticals ?? []).map((v: any) => ({ vertical: v.vertical, count: v.count }))
 
   const openApp = (key: keyof typeof SERVICE_META) => {
     const meta = SERVICE_META[key]
@@ -25,6 +34,50 @@ export default function Applications() {
   return (
     <div>
       <PageHeader title="End-Use Applications" subtitle="Click any app, signal, or metric for full details" />
+
+      <div className="mb-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <Card onClick={() => openApp('dashboard')}>
+          <h3 className="mb-4 text-lg font-semibold">Processed Events — Last 24h (ES)</h3>
+          <div className="h-56">
+            {tsData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={tsData}>
+                  <defs>
+                    <linearGradient id="gEvents" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#22d3ee" stopOpacity={0.5} />
+                      <stop offset="100%" stopColor="#22d3ee" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="time" stroke="#ffffff40" fontSize={11} />
+                  <YAxis stroke="#ffffff40" fontSize={11} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: '#12121a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12 }} />
+                  <Area type="monotone" dataKey="count" stroke="#22d3ee" fill="url(#gEvents)" strokeWidth={2} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-white/40">No indexed events yet</p>
+            )}
+          </div>
+        </Card>
+
+        <Card onClick={() => openApp('dashboard')}>
+          <h3 className="mb-4 text-lg font-semibold">Events by Vertical (ES)</h3>
+          <div className="h-56">
+            {vData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={vData}>
+                  <XAxis dataKey="vertical" stroke="#ffffff40" fontSize={10} />
+                  <YAxis stroke="#ffffff40" fontSize={11} allowDecimals={false} />
+                  <Tooltip contentStyle={{ background: '#12121a', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12 }} />
+                  <Bar dataKey="count" fill="#a78bfa" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="text-white/40">No indexed events yet</p>
+            )}
+          </div>
+        </Card>
+      </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card onClick={() => openApp('trading_bot')} className="group">

@@ -18,6 +18,20 @@ from shared.kafka_avro import create_consumer, create_processed_producer, regist
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [processor] %(message)s")
 logger = logging.getLogger(__name__)
 
+# --- Prometheus metrics ---
+try:
+    from prometheus_client import Counter, Gauge, start_http_server
+
+    EVENTS_PROCESSED = Counter("speedflow_events_processed_total", "Events processed", ["strategy"])
+    PROCESS_ERRORS = Counter("speedflow_processing_errors_total", "Processing errors")
+    INDEX_ERRORS = Counter("speedflow_search_index_errors_total", "Search index errors")
+    WINDOW_STATE = Gauge("speedflow_rolling_window_keys", "Active rolling-window source keys")
+    _METRICS = True
+except Exception:  # prometheus-client optional
+    _METRICS = False
+
+METRICS_PORT = int(os.environ.get("METRICS_PORT", "9308"))
+
 SEARCH_URL = os.environ.get("ELASTICSEARCH_URL", "").rstrip("/")
 SEARCH_INDEX = os.environ.get("SEARCH_INDEX", "processed-events")
 
@@ -36,6 +50,8 @@ def index_to_search(event: dict) -> None:
         )
         urllib.request.urlopen(req, timeout=5).read()
     except Exception as exc:  # indexing is best-effort, never block the pipeline
+        if _METRICS:
+            INDEX_ERRORS.inc()
         logger.warning("Search indexing failed for %s: %s", event.get("event_id"), exc)
 
 _state: dict[str, list[float]] = defaultdict(list)
@@ -119,6 +135,9 @@ def process_event(raw: dict) -> dict:
 
 def main():
     raw_topic = os.environ.get("KAFKA_RAW_TOPIC", "raw_stream")
+    # Subscribe by regex so per-tenant dedicated topics (raw_stream_<tenant_id>)
+    # are consumed automatically as they are created, alongside the shared topic.
+    raw_pattern = os.environ.get("KAFKA_RAW_TOPIC_PATTERN", "^raw_stream.*")
     processed_topic = os.environ.get("KAFKA_PROCESSED_TOPIC", "processed_stream")
 
     try:
@@ -126,10 +145,18 @@ def main():
     except Exception as exc:
         logger.warning("Schema registration skipped: %s", exc)
 
-    consumer = create_consumer([raw_topic], "speedflow-stream-processor", "raw_event.avsc")
+    topics = [raw_pattern] if raw_pattern else [raw_topic]
+    consumer = create_consumer(topics, "speedflow-stream-processor", "raw_event.avsc")
     producer = create_processed_producer()
 
-    logger.info("Stream processor started: %s -> %s", raw_topic, processed_topic)
+    if _METRICS:
+        try:
+            start_http_server(METRICS_PORT)
+            logger.info("Prometheus metrics on :%d/metrics", METRICS_PORT)
+        except Exception as exc:
+            logger.warning("metrics server failed: %s", exc)
+
+    logger.info("Stream processor started: %s -> %s", topics, processed_topic)
 
     while _running:
         records = consumer.poll(timeout_ms=1000)
@@ -141,8 +168,13 @@ def main():
                     producer.send(processed_topic, key=processed["source_id"], value=processed)
                     producer.flush()
                     index_to_search(processed)
+                    if _METRICS:
+                        EVENTS_PROCESSED.labels(strategy=processed["processing_strategy"]).inc()
+                        WINDOW_STATE.set(len(_state))
                     logger.info("Processed event %s strategy=%s", processed["event_id"], processed["processing_strategy"])
                 except Exception as e:
+                    if _METRICS:
+                        PROCESS_ERRORS.inc()
                     logger.error("Processing error: %s", e)
 
     consumer.close()

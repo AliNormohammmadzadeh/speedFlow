@@ -149,9 +149,21 @@ def create_processed_producer():
 
 def create_consumer(topics: list[str], group_id: str, schema_file: str = "raw_event.avsc"):
     bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    # A topic starting with "^" is treated as a subscription regex (used for
+    # per-tenant topics like raw_stream_<tenant_id> via "^raw_stream.*").
+    is_pattern = bool(topics) and topics[0].startswith("^")
     if not USE_AVRO:
         from kafka import KafkaConsumer
 
+        if is_pattern:
+            consumer = KafkaConsumer(
+                bootstrap_servers=bootstrap.split(","),
+                auto_offset_reset="earliest",
+                group_id=group_id,
+                value_deserializer=lambda m: json.loads(m.decode("utf-8")),
+            )
+            consumer.subscribe(pattern=topics[0])
+            return consumer
         return KafkaConsumer(
             *topics,
             bootstrap_servers=bootstrap.split(","),
@@ -171,6 +183,12 @@ def create_consumer(topics: list[str], group_id: str, schema_file: str = "raw_ev
         "bootstrap.servers": bootstrap,
         "group.id": group_id,
         "auto.offset.reset": "earliest",
+        # Refresh topic metadata frequently so regex subscriptions (e.g.
+        # "^raw_stream.*") pick up newly created per-tenant topics within seconds
+        # instead of the 5-minute librdkafka default.
+        "topic.metadata.refresh.interval.ms": int(
+            os.environ.get("KAFKA_METADATA_REFRESH_MS", "15000")
+        ),
     })
     consumer.subscribe(topics)
 

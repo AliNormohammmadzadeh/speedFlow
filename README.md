@@ -215,6 +215,9 @@ docker compose logs -f platform-api ai-orchestrator crawlee-worker
 | `make up` / `make down` | Full Docker Compose stack (`up` pre-pulls + builds sequentially, then starts) |
 | `make up-fast` | Full stack with parallel build (warm caches) |
 | `make path-b` | Full Docker E2E: tenant → scrape → Connect → Postgres + OpenSearch → dashboard |
+| `make observability` | Prometheus (:9090) + Grafana (:3000, admin/admin) + Kafka lag exporter (:9110) |
+| `make up-airflow` | Airflow (:8080, admin/admin) — parent + child ingestion DAGs |
+| `make flink-job` | Build custom PyFlink image + submit stateful-window job to Flink (:8082) |
 | `make start-local` | Infra in Docker + apps + pipeline on host |
 | `make start-apps` | Platform API, orchestrator, portal only |
 | `make start-pipeline` | Crawlee worker + stream processor only |
@@ -742,16 +745,16 @@ Goal: One command (`make up`) runs everything; data persists to DB + search; all
 
 Goal: Replace MVPs with durable, observable, vertically integrated pipelines.
 
-- [ ] **3.1** Submit **PyFlink** job `raw_to_processed.py` to Flink cluster; validate stateful windows
-- [ ] **3.2** **Airflow child DAGs** — trigger scrapers, monitor lag, alert on failures
-- [ ] **3.3** **Per-tenant Kafka topics** — create on tenant provision; stream processor multi-topic consume
-- [ ] **3.4** **Aggregator** — live accommodation data from ingested events (not sample JSON)
-- [ ] **3.5** **Dashboard** — ES-backed charts; wire to portal Applications page
-- [ ] **3.6** **Auditing service** — persist to Postgres `audit_log`
-- [ ] **3.7** **ML model registry** — version models; Processing Agent triggers hot reload
-- [ ] **3.8** **LLM feedback store** — Postgres table for orchestrator feedback history
-- [ ] **3.9** **Observability** — Prometheus exporters on Platform API, workers, Kafka lag; Grafana dashboard
-- [ ] **3.10** **REST/WebSocket scrapers** — validate scheduled ingestion from YAML into `raw_stream`
+- [x] **3.1** PyFlink `raw_to_processed.py` runs on the Flink cluster (custom PyFlink image) doing a keyed tumbling-window aggregation; submit via `make flink-job` (validated `flink_input` → windowed → `flink_windowed`)
+- [x] **3.2** Airflow parent DAG triggers the `scraper_ingestion` child DAG which enqueues scraper/crawlee jobs into Redis and monitors Kafka consumer lag (raises/alerts above `LAG_ALERT_THRESHOLD`); `make up-airflow`
+- [x] **3.3** Per-tenant Kafka topics created on tenant provision (`raw_stream_<tenant_id>` + schema); stream processor consumes all `raw_stream*` via regex subscription (fast metadata refresh)
+- [x] **3.4** Aggregator serves live accommodation data from `processed_events` (falls back to clearly-marked `source="sample"` when none ingested)
+- [x] **3.5** Dashboard exposes ES aggregations (`/metrics/timeseries`, `/metrics/by-vertical`); portal Applications page renders both as charts
+- [x] **3.6** Auditing service persists to Postgres `audit_log` (in-memory fallback if DB down); adds `GET /audit`
+- [x] **3.7** ML service has a versioned model registry + hot reload; Processing Agent (`required_outcomes`) → bridge publishes `processing:config` → ML service hot-reloads
+- [x] **3.8** Orchestrator persists app/LLM feedback to Postgres `feedback_metrics`; `GET /feedback/history`; recent feedback replayed into the Strategy Agent each cycle
+- [x] **3.9** Prometheus exporters on Platform API (`/metrics`), stream processor (`:9308`), crawlee worker (`:9309`), and a Kafka lag exporter (`:9110`); Grafana dashboard via `make observability`
+- [x] **3.10** REST/WebSocket scrapers validated for scheduled YAML ingestion into `raw_stream`; now also drain per-tenant queues (`scraper:jobs:<tenant_id>`) and propagate `kafka_topic`
 
 ### Phase 4 — Enterprise & cloud **REQUIRED**
 

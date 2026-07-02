@@ -11,7 +11,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
 
-PUBLIC_PATHS = {"/health", "/features", "/docs", "/openapi.json", "/redoc"}
+PUBLIC_PATHS = {"/health", "/features", "/metrics", "/docs", "/openapi.json", "/redoc"}
 TENANT_CREATE_PATH = "/tenants"
 
 

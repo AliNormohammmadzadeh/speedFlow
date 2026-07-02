@@ -3,7 +3,9 @@
 import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 import redis
@@ -23,6 +25,73 @@ from shared.utils import AgentState
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+DATABASE_URL = (
+    f"postgresql://{os.environ.get('POSTGRES_USER', 'admin')}:"
+    f"{os.environ.get('POSTGRES_PASSWORD', 'adminpassword')}@"
+    f"{os.environ.get('POSTGRES_HOST', 'postgres')}:"
+    f"{os.environ.get('POSTGRES_PORT', '5432')}/"
+    f"{os.environ.get('POSTGRES_DB', 'platform_db')}"
+)
+_engine = None
+
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        from sqlalchemy import create_engine
+
+        _engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+    return _engine
+
+
+def persist_feedback(app_name: str, metrics: dict[str, float]) -> int:
+    """Store each metric as a row in feedback_metrics; returns rows written."""
+    from sqlalchemy import text
+
+    written = 0
+    try:
+        with get_engine().begin() as conn:
+            for name, value in metrics.items():
+                try:
+                    fval = float(value)
+                except (TypeError, ValueError):
+                    continue
+                conn.execute(
+                    text(
+                        "INSERT INTO feedback_metrics (app_name, metric_name, metric_value) "
+                        "VALUES (:app, :name, :val)"
+                    ),
+                    {"app": app_name, "name": name, "val": fval},
+                )
+                written += 1
+    except Exception as exc:
+        logger.warning("feedback_metrics persistence failed: %s", exc)
+    return written
+
+
+def load_recent_feedback(hours: int = 24) -> list[dict]:
+    """Load recent feedback from Postgres, shaped for the Strategy Agent."""
+    from sqlalchemy import text
+
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT app_name, metric_name, metric_value FROM feedback_metrics "
+                    "WHERE recorded_at > NOW() - make_interval(hours => :h) "
+                    "ORDER BY recorded_at DESC LIMIT 500"
+                ),
+                {"h": hours},
+            ).mappings().all()
+        return [
+            {"app_name": r["app_name"], "metric_name": r["metric_name"], "metric_value": r["metric_value"]}
+            for r in rows
+        ]
+    except Exception as exc:
+        logger.warning("feedback history load failed: %s", exc)
+        return []
+
+
 scrape_planner = ScrapePlannerAgent()
 strategy_agent = StrategyAgent()
 discovery_agent = DiscoveryAgent()
@@ -37,6 +106,7 @@ class OrchestrationRequest(BaseModel):
     business_goals: list[str] = ["maximize_revenue"]
     feedback: list[dict] = []
     desired_state: dict = {}
+    required_outcomes: list[str] = []
     run_bridges: bool = True
 
 
@@ -72,9 +142,12 @@ async def orchestrate(req: OrchestrationRequest, background_tasks: BackgroundTas
     cycle_id = str(uuid.uuid4())[:8]
     state = AgentState()
 
-    strategy_out = await strategy_agent.run(state, feedback=req.feedback)
+    # Merge persisted feedback history (Postgres) with any inline feedback so the
+    # Strategy Agent reacts to accumulated app metrics, not just this request.
+    feedback = list(req.feedback) + load_recent_feedback()
+    strategy_out = await strategy_agent.run(state, feedback=feedback)
     discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
-    processing_out = await processing_agent.run(state)
+    processing_out = await processing_agent.run(state, required_outcomes=req.required_outcomes or None)
     config_out = await config_agent.run(state, desired_state=req.desired_state or None)
 
     bridges_applied = None
@@ -93,15 +166,55 @@ async def orchestrate(req: OrchestrationRequest, background_tasks: BackgroundTas
 
 @app.post("/feedback")
 async def receive_feedback(req: FeedbackRequest):
-    """Receive performance metrics from end-use apps."""
-    client = redis.from_url(__import__("os").environ.get("REDIS_URL", "redis://localhost:6379/0"))
-    for name, value in req.metrics.items():
-        client.rpush("feedback:metrics", json.dumps({
-            "app_name": req.app_name,
-            "metric_name": name,
-            "metric_value": value,
-        }))
-    return {"status": "recorded", "app": req.app_name, "metrics_count": len(req.metrics)}
+    """Receive performance metrics from end-use apps; persist to Postgres history."""
+    # Durable history (Postgres) so feedback survives restarts and can be replayed
+    # into the Strategy Agent on later orchestration cycles.
+    written = persist_feedback(req.app_name, req.metrics)
+    # Keep the Redis list too for any low-latency consumers.
+    try:
+        client = redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+        for name, value in req.metrics.items():
+            client.rpush("feedback:metrics", json.dumps({
+                "app_name": req.app_name,
+                "metric_name": name,
+                "metric_value": value,
+            }))
+    except Exception as exc:
+        logger.warning("feedback redis push failed: %s", exc)
+    return {"status": "recorded", "app": req.app_name, "metrics_count": len(req.metrics), "persisted": written}
+
+
+@app.get("/feedback/history")
+def feedback_history(hours: int = 24, app_name: str | None = None):
+    """Return persisted feedback history from Postgres."""
+    from sqlalchemy import text
+
+    query = (
+        "SELECT app_name, metric_name, metric_value, recorded_at FROM feedback_metrics "
+        "WHERE recorded_at > NOW() - make_interval(hours => :h) "
+    )
+    params: dict[str, Any] = {"h": hours}
+    if app_name:
+        query += "AND app_name = :app "
+        params["app"] = app_name
+    query += "ORDER BY recorded_at DESC LIMIT 500"
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(query), params).mappings().all()
+        return {
+            "count": len(rows),
+            "history": [
+                {
+                    "app_name": r["app_name"],
+                    "metric_name": r["metric_name"],
+                    "metric_value": r["metric_value"],
+                    "recorded_at": r["recorded_at"].isoformat() if r["recorded_at"] else None,
+                }
+                for r in rows
+            ],
+        }
+    except Exception as exc:
+        raise HTTPException(503, f"feedback history unavailable: {exc}")
 
 
 @app.get("/agents/{agent_name}/status")

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: SpeedFlow
+    orgId: 1
+    folder: SpeedFlow
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

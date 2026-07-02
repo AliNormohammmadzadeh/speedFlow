@@ -19,10 +19,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
+from starlette.responses import Response
+
 from middleware import TenantQuotaMiddleware, enforce_daily_quota, get_daily_usage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Prometheus metrics (scraped at /metrics) ---
+TENANTS_CREATED = Counter("speedflow_tenants_created_total", "Tenants created", ["plan"])
+SCRAPES_SUBMITTED = Counter("speedflow_scrapes_submitted_total", "Scrape jobs submitted", ["plan"])
+SCRAPE_ERRORS = Counter("speedflow_scrape_errors_total", "Scrape submission errors")
 
 DATABASE_URL = (
     f"postgresql://{os.environ.get('POSTGRES_USER', 'admin')}:"
@@ -46,6 +54,50 @@ def load_plans() -> dict:
 
 
 _plans: dict = load_plans()
+
+
+def provision_tenant_topic(tenant_id: str) -> str | None:
+    """Create the dedicated raw topic + register its Avro schema for a tenant.
+
+    Best-effort: tenant creation must not fail if Kafka/Schema Registry are down.
+    Returns the topic name on success, else None.
+    """
+    topic = f"raw_stream_{tenant_id}"
+    bootstrap = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "kafka:9092")
+    sr_url = os.environ.get("SCHEMA_REGISTRY_URL", "http://schema-registry:8081").rstrip("/")
+    created = False
+    try:
+        from kafka.admin import KafkaAdminClient, NewTopic
+        from kafka.errors import TopicAlreadyExistsError
+
+        admin = KafkaAdminClient(bootstrap_servers=bootstrap.split(","), request_timeout_ms=8000)
+        try:
+            admin.create_topics([NewTopic(name=topic, num_partitions=3, replication_factor=1)])
+            created = True
+        except TopicAlreadyExistsError:
+            created = True
+        finally:
+            admin.close()
+    except Exception as exc:
+        logger.warning("tenant topic creation failed for %s: %s", topic, exc)
+        return None
+
+    # Register the raw_event schema under the tenant topic's subject by copying
+    # the canonical raw_stream-value schema (topic-name subject strategy).
+    try:
+        with httpx.Client(timeout=8.0) as client:
+            latest = client.get(f"{sr_url}/subjects/raw_stream-value/versions/latest")
+            if latest.status_code == 200:
+                schema_str = latest.json()["schema"]
+                client.post(
+                    f"{sr_url}/subjects/{topic}-value/versions",
+                    headers={"Content-Type": "application/vnd.schemaregistry.v1+json"},
+                    json={"schema": schema_str},
+                )
+    except Exception as exc:
+        logger.warning("tenant schema registration failed for %s: %s", topic, exc)
+
+    return topic if created else None
 
 
 def get_db():
@@ -162,6 +214,11 @@ app.add_middleware(
     get_db_fn=get_db,
 )
 
+@app.get("/metrics")
+def metrics():
+    # Prometheus scrape endpoint (default process + custom counters above).
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
 
 @app.get("/health")
 async def health():
@@ -187,13 +244,22 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
     db.commit()
 
     plan = _plans[req.plan]
+    features = plan.get("features", {})
+    TENANTS_CREATED.labels(plan=req.plan).inc()
+
+    # Provision a dedicated per-tenant Kafka topic + schema for Pro/Enterprise.
+    if features.get("dedicated_kafka_topic"):
+        provisioned = provision_tenant_topic(tenant_id)
+        if provisioned:
+            logger.info("Provisioned dedicated topic %s for tenant %s", provisioned, tenant_id)
+
     return TenantResponse(
         tenant_id=tenant_id,
         name=req.name,
         plan=req.plan,
         api_key=api_key,
         kafka_topic_prefix=topic_prefix,
-        features=plan.get("features", {}),
+        features=features,
     )
 
 
@@ -266,8 +332,10 @@ async def request_scrape(
         )
         if resp.status_code != 200:
             await redis.decr(f"tenant:{tenant['tenant_id']}:scrape_count:{datetime.now(timezone.utc).strftime('%Y%m%d')}")
+            SCRAPE_ERRORS.inc()
             raise HTTPException(502, f"Scrape planner failed: {resp.text}")
         result = resp.json()
+    SCRAPES_SUBMITTED.labels(plan=tenant["plan"]).inc()
 
     job_id = result.get("job_id", "unknown")
     db.execute(

@@ -43,7 +43,7 @@ async def listen_source(source: dict, producer) -> None:
                         url=url,
                         value_score=source.get("value_score"),
                     )
-                    publish_event(producer, event)
+                    publish_event(producer, event, topic=source.get("kafka_topic"))
         except Exception as e:
             logger.error("WebSocket error for %s: %s — reconnecting in 5s", source["id"], e)
             await asyncio.sleep(5)

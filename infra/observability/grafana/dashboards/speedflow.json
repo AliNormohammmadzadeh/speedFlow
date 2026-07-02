@@ -1,0 +1,67 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "graphTooltip": 0,
+  "schemaVersion": 39,
+  "tags": ["speedflow"],
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "SpeedFlow Pipeline",
+  "uid": "speedflow-pipeline",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Scrapes Submitted (total)",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(speedflow_scrapes_submitted_total)", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Events Processed (total)",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(speedflow_events_processed_total)", "refId": "A" }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Consumer Group Lag (total)",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(speedflow_consumer_group_lag_total)", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Events Processed Rate (by strategy)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (strategy) (rate(speedflow_events_processed_total[5m]))", "legendFormat": "{{strategy}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Kafka Consumer Lag (by topic)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "speedflow_consumer_group_lag", "legendFormat": "{{topic}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Crawl Pages / Jobs",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(speedflow_crawl_pages_total)", "legendFormat": "pages", "refId": "A" },
+        { "expr": "sum by (status) (speedflow_crawl_jobs_total)", "legendFormat": "jobs {{status}}", "refId": "B" }
+      ]
+    }
+  ]
+}

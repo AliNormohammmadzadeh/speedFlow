@@ -260,6 +260,29 @@ async def dashboard_metrics():
         return {}
 
 
+@app.get("/api/dashboard/timeseries")
+async def dashboard_timeseries(hours: int = 24, bucket_minutes: int = 60, vertical: str = ""):
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{SERVICES['dashboard']}/metrics/timeseries",
+                params={"hours": hours, "bucket_minutes": bucket_minutes, "vertical": vertical},
+            )
+            return r.json() if r.status_code == 200 else {"series": []}
+    except Exception:
+        return {"series": []}
+
+
+@app.get("/api/dashboard/by-vertical")
+async def dashboard_by_vertical():
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{SERVICES['dashboard']}/metrics/by-vertical")
+            return r.json() if r.status_code == 200 else {"verticals": []}
+    except Exception:
+        return {"verticals": []}
+
+
 @app.get("/api/connectors")
 async def connectors():
     try:

@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -62,6 +62,21 @@ pipeline-test:
 
 path-b:
 	bash scripts/path-b-e2e.sh
+
+# Submit the PyFlink stateful-window job to the Flink cluster (custom PyFlink image)
+flink-job:
+	docker compose -f docker-compose.yml -f docker-compose.flink.yml up -d --build flink-jobmanager flink-taskmanager flink-job-submitter
+	@echo "Flink dashboard: http://localhost:8082 — look for 'raw_to_processed_windowed'"
+
+# Optional Airflow stack (:8080, admin/admin) — parent + child ingestion DAGs
+up-airflow:
+	docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d --build airflow-init airflow
+	@echo "Airflow: http://localhost:8080 (admin/admin)"
+
+# Observability stack: Prometheus (:9090) + Grafana (:3000, admin/admin) + Kafka lag exporter (:9110)
+observability:
+	docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d --build kafka-lag-exporter prometheus grafana
+	@echo "Prometheus: http://localhost:9090 | Grafana: http://localhost:3000 (admin/admin)"
 
 # Multi-tenant platform
 tenant-create:
