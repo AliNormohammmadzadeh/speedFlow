@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -62,6 +62,11 @@ pipeline-test:
 
 path-b:
 	bash scripts/path-b-e2e.sh
+
+# Optional Airflow stack (:8080, admin/admin) — parent + child ingestion DAGs
+up-airflow:
+	docker compose -f docker-compose.yml -f docker-compose.airflow.yml up -d --build airflow-init airflow
+	@echo "Airflow: http://localhost:8080 (admin/admin)"
 
 # Observability stack: Prometheus (:9090) + Grafana (:3000, admin/admin) + Kafka lag exporter (:9110)
 observability:
