@@ -131,6 +131,16 @@ class TenantResponse(BaseModel):
     api_key: str
     kafka_topic_prefix: str
     features: dict[str, Any]
+    region: str = "us"
+
+
+# Data residency (4.10): allowed home regions + their Kafka cluster endpoints.
+ALLOWED_REGIONS = [r.strip() for r in os.environ.get("ALLOWED_REGIONS", "us,eu,apac").split(",") if r.strip()]
+REGION_CLUSTERS = {
+    "us": os.environ.get("KAFKA_US", "kafka-us-broker:9094"),
+    "eu": os.environ.get("KAFKA_EU", "kafka-eu-broker:9094"),
+    "apac": os.environ.get("KAFKA_APAC", "kafka-apac-broker:9094"),
+}
 
 
 class UsageResponse(BaseModel):
@@ -283,6 +293,9 @@ async def health():
 def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
     if req.plan not in _plans:
         raise HTTPException(400, f"Unknown plan: {req.plan}. Available: {list(_plans.keys())}")
+    # Data residency enforcement: reject tenants for non-approved regions.
+    if req.region not in ALLOWED_REGIONS:
+        raise HTTPException(400, f"Region '{req.region}' not permitted. Allowed: {ALLOWED_REGIONS}")
 
     tenant_id = str(uuid.uuid4())[:12]
     api_key = f"sf_{secrets.token_urlsafe(24)}"
@@ -315,7 +328,17 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
         api_key=api_key,
         kafka_topic_prefix=topic_prefix,
         features=features,
+        region=req.region,
     )
+
+
+@app.get("/residency")
+def residency():
+    """Data-residency policy: allowed regions and their Kafka cluster endpoints."""
+    return {
+        "allowed_regions": ALLOWED_REGIONS,
+        "region_clusters": {r: REGION_CLUSTERS.get(r) for r in ALLOWED_REGIONS},
+    }
 
 
 class TokenRequest(BaseModel):
@@ -418,6 +441,7 @@ def get_current_tenant(
         api_key=tenant["api_key"],
         kafka_topic_prefix=tenant["kafka_topic_prefix"],
         features=plan.get("features", {}),
+        region=tenant.get("region", "us"),
     )
 
 
