@@ -13,11 +13,20 @@ class StrategyAgent:
 
     name = "strategy"
 
-    async def run(self, state: AgentState, feedback: list[dict] | None = None) -> dict[str, Any]:
+    async def run(
+        self,
+        state: AgentState,
+        feedback: list[dict] | None = None,
+        spend: dict | None = None,
+    ) -> dict[str, Any]:
         metrics = load_yaml("business/metrics.yaml")
         verticals = load_yaml("business/verticals.yaml")
         kpis = metrics.get("primary_kpis", {})
         budget = metrics.get("budget_constraints", {})
+
+        # FinOps loop (4.7): compare real spend to daily budgets and emit throttle
+        # flags the orchestrator/bridges enforce.
+        finops = self._finops_throttle(spend or {})
 
         feedback_summary = self._aggregate_feedback(feedback or [])
         composite_score = self._compute_composite_score(feedback_summary, kpis)
@@ -46,15 +55,44 @@ class StrategyAgent:
                 {"goal": "maximize_revenue_per_kb", "weight": kpis.get("revenue_per_kilobyte", {}).get("weight", 0.25)},
                 {"goal": "maximize_trading_profit", "weight": kpis.get("trading_profit_factor", {}).get("weight", 0.30)},
             ],
-            "budget_remaining": {
-                "scraping": budget.get("daily_scraping_budget_usd", 500),
-                "compute": budget.get("daily_compute_budget_usd", 300),
-            },
+            "budget_remaining": finops["budget_remaining"],
+            "budget_status": finops["budget_status"],
+            "throttle": finops["throttle"],
             "llm_analysis": llm_analysis,
         }
         state.set("strategy_output", result)
-        logger.info("Strategy agent: composite_score=%.2f gaps=%d", composite_score, len(gaps))
+        logger.info(
+            "Strategy agent: composite_score=%.2f gaps=%d throttle=%s",
+            composite_score, len(gaps), finops["throttle"],
+        )
         return result
+
+    def _finops_throttle(self, spend: dict) -> dict:
+        """Load daily budgets and derive throttle flags from real spend."""
+        cfg = load_yaml("finops/budgets.yaml")
+        daily = (cfg.get("budgets", {}) or {}).get("daily", {})
+        budgets = {
+            "scrape": float(daily.get("scraping_usd", 500)),
+            "compute": float(daily.get("compute_usd", 300)),
+            "llm": float(daily.get("llm_usd", 100)),
+        }
+
+        def pct(cat: str) -> float:
+            b = budgets.get(cat, 0)
+            s = float(spend.get(cat, 0.0))
+            return round(s / b, 3) if b else 0.0
+
+        status = {cat: pct(cat) for cat in budgets}
+        # Alert thresholds from budgets.yaml: 100% throttles that category, 110%
+        # of scraping additionally pauses the Discovery Agent.
+        throttle = {
+            "scrapers": status["scrape"] >= 1.0,
+            "compute": status["compute"] >= 1.0,
+            "llm": status["llm"] >= 1.0,
+            "pause_discovery": status["scrape"] >= 1.1,
+        }
+        remaining = {cat: round(budgets[cat] - float(spend.get(cat, 0.0)), 2) for cat in budgets}
+        return {"budget_status": status, "throttle": throttle, "budget_remaining": remaining}
 
     def _aggregate_feedback(self, feedback: list[dict]) -> dict[str, dict]:
         agg: dict[str, dict] = {}

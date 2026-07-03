@@ -11,18 +11,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 logger = logging.getLogger(__name__)
 
-PUBLIC_PATHS = {"/health", "/features", "/metrics", "/docs", "/openapi.json", "/redoc"}
+PUBLIC_PATHS = {"/health", "/features", "/metrics", "/auth/token", "/residency", "/docs", "/openapi.json", "/redoc"}
 TENANT_CREATE_PATH = "/tenants"
 
 
 class TenantQuotaMiddleware(BaseHTTPMiddleware):
     """Attach tenant context and enforce subscription feature flags on protected routes."""
 
-    def __init__(self, app, get_plans, get_redis, resolve_tenant_fn, get_db_fn):
+    def __init__(self, app, get_plans, get_redis, resolve_tenant_fn, get_db_fn, resolve_tenant_by_id_fn):
         super().__init__(app)
         self.get_plans = get_plans
         self.get_redis = get_redis
         self.resolve_tenant = resolve_tenant_fn
+        self.resolve_tenant_by_id = resolve_tenant_by_id_fn
         self.get_db = get_db_fn
 
     async def dispatch(self, request: Request, call_next):
@@ -33,10 +34,40 @@ class TenantQuotaMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         api_key = request.headers.get("X-API-Key")
-        if not api_key and path.startswith("/scrape"):
-            raise HTTPException(401, "Missing X-API-Key header")
+        # Accept OAuth2 Bearer JWT as an alternative to the raw API key.
+        bearer = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            bearer = auth_header[7:]
 
-        if api_key:
+        if not api_key and not bearer and path.startswith("/scrape"):
+            raise HTTPException(401, "Missing credentials (X-API-Key or Bearer token)")
+
+        if bearer:
+            import auth as auth_mod
+
+            try:
+                claims = auth_mod.decode_token(bearer)
+            except Exception as exc:
+                raise HTTPException(401, f"Invalid token: {exc}")
+            db_gen = self.get_db()
+            db = next(db_gen)
+            try:
+                tenant = self.resolve_tenant_by_id(db, claims["sub"])
+            finally:
+                try:
+                    next(db_gen)
+                except StopIteration:
+                    pass
+            plans = self.get_plans()
+            plan = plans.get(tenant["plan"], plans.get("starter", {}))
+            request.state.tenant = tenant
+            request.state.plan = plan
+            request.state.features = plan.get("features", {})
+            request.state.limits = plan.get("limits", {})
+            request.state.role = claims.get("role", "api_consumer")
+            request.state.permissions = claims.get("permissions", [])
+        elif api_key:
             db_gen = self.get_db()
             db = next(db_gen)
             try:
@@ -47,6 +78,9 @@ class TenantQuotaMiddleware(BaseHTTPMiddleware):
                 request.state.plan = plan
                 request.state.features = plan.get("features", {})
                 request.state.limits = plan.get("limits", {})
+                # Raw API keys act as the tenant's admin principal.
+                request.state.role = tenant.get("role", "admin")
+                request.state.permissions = ["*"]
             finally:
                 try:
                     next(db_gen)

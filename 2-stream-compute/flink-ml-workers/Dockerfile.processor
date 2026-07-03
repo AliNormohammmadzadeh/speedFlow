@@ -4,6 +4,7 @@ WORKDIR /app
 COPY 2-stream-compute/flink-ml-workers/requirements-processor.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY 2-stream-compute/flink-ml-workers/stream_processor.py .
+COPY 2-stream-compute/flink-ml-workers/pii.py .
 COPY 1-ingestion-edge/scrapers/shared/kafka_avro.py ./shared/kafka_avro.py
 COPY schemas/avro ./schemas/avro
 

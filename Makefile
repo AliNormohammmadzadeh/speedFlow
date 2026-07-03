@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -62,6 +62,26 @@ pipeline-test:
 
 path-b:
 	bash scripts/path-b-e2e.sh
+
+# --- Phase 4 local emulation (no cloud account needed) ---
+# Vault dev backend + orchestrator resolving secrets from it
+secrets-demo:
+	docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d vault ai-orchestrator
+	@echo "Write a secret: docker exec platform-vault vault kv put secret/speedflow DEMO_SECRET=from-vault"
+
+# Second Kafka cluster + MirrorMaker 2 cross-region replication
+dr-demo:
+	docker compose -f docker-compose.yml -f docker-compose.dr.yml up -d kafka-dr mirrormaker
+	@echo "Verify: docker exec platform-kafka-dr kafka-topics --bootstrap-server kafka-dr:9092 --list"
+
+# Offline terraform plan for the full MSK/EKS/RDS/ElastiCache graph
+tf-plan:
+	bash scripts/tf-plan.sh
+
+# Validate GitOps k8s manifests against real Kubernetes schemas (kubeconform)
+k8s-validate:
+	kubeconform -summary -strict infra/gitops/k8s/*.yaml
+	kubeconform -summary -ignore-missing-schemas infra/gitops/argocd/*.yaml infra/gitops/argocd/apps/*.yaml
 
 # Submit the PyFlink stateful-window job to the Flink cluster (custom PyFlink image)
 flink-job:

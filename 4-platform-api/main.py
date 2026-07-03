@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from starlette.responses import Response
 
+import auth as auth_mod
 from middleware import TenantQuotaMiddleware, enforce_daily_quota, get_daily_usage
 
 logging.basicConfig(level=logging.INFO)
@@ -119,6 +120,8 @@ class TenantCreate(BaseModel):
     name: str
     plan: str = "starter"
     email: str | None = None
+    role: str = "admin"
+    region: str = "us"
 
 
 class TenantResponse(BaseModel):
@@ -128,6 +131,16 @@ class TenantResponse(BaseModel):
     api_key: str
     kafka_topic_prefix: str
     features: dict[str, Any]
+    region: str = "us"
+
+
+# Data residency (4.10): allowed home regions + their Kafka cluster endpoints.
+ALLOWED_REGIONS = [r.strip() for r in os.environ.get("ALLOWED_REGIONS", "us,eu,apac").split(",") if r.strip()]
+REGION_CLUSTERS = {
+    "us": os.environ.get("KAFKA_US", "kafka-us-broker:9094"),
+    "eu": os.environ.get("KAFKA_EU", "kafka-eu-broker:9094"),
+    "apac": os.environ.get("KAFKA_APAC", "kafka-apac-broker:9094"),
+}
 
 
 class UsageResponse(BaseModel):
@@ -167,6 +180,36 @@ def resolve_tenant(db: Session, api_key: str | None) -> dict:
     return dict(row)
 
 
+# Per-unit cost estimates (USD) for metering, mirrors config/finops/budgets.yaml.
+SCRAPE_UNIT_COST = float(os.environ.get("SCRAPE_UNIT_COST_USD", "0.01"))
+
+
+def record_usage(tenant_id: str, category: str, units: float, unit_cost: float, meta: dict | None = None) -> None:
+    """Meter resource usage into usage_records for billing + FinOps."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO usage_records (tenant_id, category, units, unit_cost_usd, cost_usd, meta) "
+                    "VALUES (:tid, :cat, :units, :uc, :cost, CAST(:meta AS JSONB))"
+                ),
+                {"tid": tenant_id, "cat": category, "units": units, "uc": unit_cost,
+                 "cost": round(units * unit_cost, 6), "meta": json.dumps(meta or {})},
+            )
+    except Exception as exc:
+        logger.warning("usage metering failed: %s", exc)
+
+
+def resolve_tenant_by_id(db: Session, tenant_id: str) -> dict:
+    row = db.execute(
+        text("SELECT * FROM tenants WHERE tenant_id = :tid AND active = true"),
+        {"tid": tenant_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(401, "Unknown or inactive tenant")
+    return dict(row)
+
+
 def enforce_plan_limits(tenant: dict, scrape_req: ScrapeRequest) -> dict:
     plan = _plans.get(tenant["plan"], _plans.get("starter", {}))
     limits = plan.get("limits", {})
@@ -193,6 +236,26 @@ def _merge_job_row(row: dict, live: dict | None = None) -> ScrapeJobResponse:
 async def lifespan(app: FastAPI):
     global _plans
     _plans = load_plans()
+    # Idempotent migrations for Phase 4 columns (role, billing, residency).
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'admin'"))
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS region VARCHAR(32) DEFAULT 'us'"))
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS usage_records ("
+                "id SERIAL PRIMARY KEY, tenant_id VARCHAR(32) NOT NULL, category VARCHAR(32) NOT NULL, "
+                "units DOUBLE PRECISION DEFAULT 1, unit_cost_usd DOUBLE PRECISION DEFAULT 0, "
+                "cost_usd DOUBLE PRECISION DEFAULT 0, meta JSONB DEFAULT '{}', recorded_at TIMESTAMPTZ DEFAULT NOW())"
+            ))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage_records(tenant_id, recorded_at DESC)"))
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS invoices ("
+                "id SERIAL PRIMARY KEY, tenant_id VARCHAR(32) NOT NULL, period VARCHAR(7) NOT NULL, "
+                "amount_usd DOUBLE PRECISION NOT NULL, breakdown JSONB, status VARCHAR(20) DEFAULT 'draft', "
+                "created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE (tenant_id, period))"
+            ))
+    except Exception as exc:
+        logger.warning("startup migration skipped: %s", exc)
     logger.info("Platform API started with %d subscription plans", len(_plans))
     yield
     if _redis:
@@ -212,6 +275,7 @@ app.add_middleware(
     get_redis=get_redis,
     resolve_tenant_fn=resolve_tenant,
     get_db_fn=get_db,
+    resolve_tenant_by_id_fn=resolve_tenant_by_id,
 )
 
 @app.get("/metrics")
@@ -229,6 +293,9 @@ async def health():
 def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
     if req.plan not in _plans:
         raise HTTPException(400, f"Unknown plan: {req.plan}. Available: {list(_plans.keys())}")
+    # Data residency enforcement: reject tenants for non-approved regions.
+    if req.region not in ALLOWED_REGIONS:
+        raise HTTPException(400, f"Region '{req.region}' not permitted. Allowed: {ALLOWED_REGIONS}")
 
     tenant_id = str(uuid.uuid4())[:12]
     api_key = f"sf_{secrets.token_urlsafe(24)}"
@@ -236,10 +303,11 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
 
     db.execute(
         text("""
-            INSERT INTO tenants (tenant_id, name, email, plan, api_key, kafka_topic_prefix, active)
-            VALUES (:tid, :name, :email, :plan, :key, :prefix, true)
+            INSERT INTO tenants (tenant_id, name, email, plan, api_key, kafka_topic_prefix, active, role, region)
+            VALUES (:tid, :name, :email, :plan, :key, :prefix, true, :role, :region)
         """),
-        {"tid": tenant_id, "name": req.name, "email": req.email, "plan": req.plan, "key": api_key, "prefix": topic_prefix},
+        {"tid": tenant_id, "name": req.name, "email": req.email, "plan": req.plan, "key": api_key,
+         "prefix": topic_prefix, "role": req.role, "region": req.region},
     )
     db.commit()
 
@@ -260,7 +328,103 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
         api_key=api_key,
         kafka_topic_prefix=topic_prefix,
         features=features,
+        region=req.region,
     )
+
+
+@app.get("/residency")
+def residency():
+    """Data-residency policy: allowed regions and their Kafka cluster endpoints."""
+    return {
+        "allowed_regions": ALLOWED_REGIONS,
+        "region_clusters": {r: REGION_CLUSTERS.get(r) for r in ALLOWED_REGIONS},
+    }
+
+
+class TokenRequest(BaseModel):
+    api_key: str
+
+
+@app.post("/auth/token")
+def issue_token(req: TokenRequest, db: Session = Depends(get_db)):
+    """OAuth2-style token exchange: trade a tenant API key for a short-lived JWT."""
+    tenant = resolve_tenant(db, req.api_key)
+    role = tenant.get("role") or "admin"
+    token = auth_mod.issue_token(tenant["tenant_id"], role, tenant["plan"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": auth_mod.JWT_TTL_SECONDS,
+        "role": role,
+        "permissions": auth_mod.permissions_for(role),
+    }
+
+
+def require_permission(permission: str):
+    """FastAPI dependency enforcing an RBAC permission from the request principal."""
+
+    def _dep(request: Request):
+        perms = getattr(request.state, "permissions", [])
+        if not auth_mod.has_permission(perms, permission):
+            raise HTTPException(403, f"Missing required permission: {permission}")
+        return True
+
+    return _dep
+
+
+@app.get("/admin/tenants")
+def admin_list_tenants(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(require_permission("deploy")),
+):
+    """Admin/operator-only tenant listing (RBAC-gated; analysts are denied)."""
+    rows = db.execute(
+        text("SELECT tenant_id, name, plan, role, region, active FROM tenants ORDER BY created_at DESC LIMIT 100")
+    ).mappings().all()
+    return {"count": len(rows), "tenants": [dict(r) for r in rows]}
+
+
+@app.get("/billing/invoice")
+def billing_invoice(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    """Generate the current-month invoice from metered usage + plan base fee."""
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    plan = _plans.get(tenant["plan"], {})
+    base_fee = float(plan.get("price_usd_monthly", plan.get("price_usd", 0)) or 0)
+
+    rows = db.execute(
+        text(
+            "SELECT category, SUM(units) AS units, SUM(cost_usd) AS cost FROM usage_records "
+            "WHERE tenant_id = :tid AND to_char(recorded_at, 'YYYY-MM') = :period GROUP BY category"
+        ),
+        {"tid": tenant["tenant_id"], "period": period},
+    ).mappings().all()
+
+    usage_breakdown = {r["category"]: {"units": float(r["units"]), "cost_usd": round(float(r["cost"]), 4)} for r in rows}
+    usage_total = sum(v["cost_usd"] for v in usage_breakdown.values())
+    total = round(base_fee + usage_total, 2)
+    breakdown = {"base_fee_usd": base_fee, "usage": usage_breakdown, "usage_total_usd": round(usage_total, 4)}
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO invoices (tenant_id, period, amount_usd, breakdown, status) "
+                    "VALUES (:tid, :period, :amt, CAST(:bd AS JSONB), 'draft') "
+                    "ON CONFLICT (tenant_id, period) DO UPDATE SET amount_usd = EXCLUDED.amount_usd, "
+                    "breakdown = EXCLUDED.breakdown"
+                ),
+                {"tid": tenant["tenant_id"], "period": period, "amt": total, "bd": json.dumps(breakdown)},
+            )
+    except Exception as exc:
+        logger.warning("invoice upsert failed: %s", exc)
+
+    return {"tenant_id": tenant["tenant_id"], "period": period, "amount_usd": total, "breakdown": breakdown}
 
 
 @app.get("/tenants/me", response_model=TenantResponse)
@@ -277,6 +441,7 @@ def get_current_tenant(
         api_key=tenant["api_key"],
         kafka_topic_prefix=tenant["kafka_topic_prefix"],
         features=plan.get("features", {}),
+        region=tenant.get("region", "us"),
     )
 
 
@@ -303,11 +468,14 @@ async def tenant_usage(
 @app.post("/scrape", response_model=ScrapeJobResponse)
 async def request_scrape(
     req: ScrapeRequest,
+    request: Request,
     db: Session = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
-    tenant = resolve_tenant(db, x_api_key)
+    # Accept either the middleware-resolved principal (Bearer JWT or API key) or
+    # a direct X-API-Key on the request.
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
     plan = enforce_plan_limits(tenant, req)
     limits = plan.get("limits", {})
     features = plan.get("features", {})
@@ -336,6 +504,9 @@ async def request_scrape(
             raise HTTPException(502, f"Scrape planner failed: {resp.text}")
         result = resp.json()
     SCRAPES_SUBMITTED.labels(plan=tenant["plan"]).inc()
+    # Meter scrape usage for billing + FinOps (units = requested pages).
+    pages = req.max_pages or limits.get("max_pages_per_job", 20)
+    record_usage(tenant["tenant_id"], "scrape", float(pages), SCRAPE_UNIT_COST, {"job_id": result.get("job_id")})
 
     job_id = result.get("job_id", "unknown")
     db.execute(

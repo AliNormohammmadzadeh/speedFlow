@@ -24,13 +24,15 @@ def load_yaml(relative_path: str) -> dict:
 
 def get_llm_client():
     """Return LLM client if API key configured, else None for rule-based fallback."""
+    from shared.secrets_provider import get_secret
+
     provider = os.environ.get("LLM_PROVIDER", "openai")
-    if provider == "openai" and os.environ.get("OPENAI_API_KEY"):
+    if provider == "openai" and get_secret("OPENAI_API_KEY"):
         from openai import OpenAI
-        return OpenAI(), os.environ.get("LLM_MODEL", "gpt-4o-mini")
-    if provider == "anthropic" and os.environ.get("ANTHROPIC_API_KEY"):
+        return OpenAI(api_key=get_secret("OPENAI_API_KEY")), os.environ.get("LLM_MODEL", "gpt-4o-mini")
+    if provider == "anthropic" and get_secret("ANTHROPIC_API_KEY"):
         import anthropic
-        return anthropic.Anthropic(), os.environ.get("LLM_MODEL", "claude-3-haiku-20240307")
+        return anthropic.Anthropic(api_key=get_secret("ANTHROPIC_API_KEY")), os.environ.get("LLM_MODEL", "claude-3-haiku-20240307")
     return None, None
 
 

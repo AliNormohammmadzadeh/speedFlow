@@ -1,0 +1,50 @@
+# DR overlay (task 4.10 local emulation): a second single-node Kafka cluster +
+# MirrorMaker 2 replicating primary -> dr.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dr.yml up -d kafka-dr mirrormaker
+services:
+  kafka-dr:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: platform-kafka-dr
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-dr:29093
+      KAFKA_LISTENERS: PLAINTEXT://kafka-dr:9092,PLAINTEXT_HOST://0.0.0.0:39092,CONTROLLER://kafka-dr:29093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-dr:9092,PLAINTEXT_HOST://localhost:39092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      CLUSTER_ID: CERJCJjnSeGz4IKJuPfBFA
+    ports:
+      - "39092:39092"
+    volumes:
+      - kafka-dr-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "kafka-dr:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  mirrormaker:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: platform-mirrormaker
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-dr:
+        condition: service_healthy
+    volumes:
+      - ./infra/dr/mm2.local.properties:/etc/mm2.properties:ro
+      - ./infra/dr/mm2-log4j.properties:/etc/mm2-log4j.properties:ro
+    environment:
+      KAFKA_LOG4J_OPTS: "-Dlog4j.configuration=file:/etc/mm2-log4j.properties"
+    command: ["connect-mirror-maker", "/etc/mm2.properties"]
+    restart: unless-stopped
+
+volumes:
+  kafka-dr-data:

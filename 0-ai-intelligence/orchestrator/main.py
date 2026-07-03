@@ -20,6 +20,7 @@ from agents.strategy_agent import StrategyAgent
 from bridges.config_bridge import ConfigBridge
 from bridges.processing_bridge import ProcessingBridge
 from bridges.scraper_bridge import ScraperBridge
+from shared.governance import AgentGovernance
 from shared.utils import AgentState
 
 logging.basicConfig(level=logging.INFO)
@@ -69,6 +70,24 @@ def persist_feedback(app_name: str, metrics: dict[str, float]) -> int:
     return written
 
 
+def load_today_spend() -> dict:
+    """Aggregate today's metered spend by category from usage_records (FinOps)."""
+    from sqlalchemy import text
+
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT category, COALESCE(SUM(cost_usd),0) AS cost FROM usage_records "
+                    "WHERE recorded_at::date = CURRENT_DATE GROUP BY category"
+                )
+            ).mappings().all()
+        return {r["category"]: float(r["cost"]) for r in rows}
+    except Exception as exc:
+        logger.warning("spend load failed: %s", exc)
+        return {}
+
+
 def load_recent_feedback(hours: int = 24) -> list[dict]:
     """Load recent feedback from Postgres, shaped for the Strategy Agent."""
     from sqlalchemy import text
@@ -100,6 +119,7 @@ config_agent = ConfigAgent()
 scraper_bridge = ScraperBridge()
 processing_bridge = ProcessingBridge()
 config_bridge = ConfigBridge()
+governance = AgentGovernance()
 
 
 class OrchestrationRequest(BaseModel):
@@ -107,6 +127,7 @@ class OrchestrationRequest(BaseModel):
     feedback: list[dict] = []
     desired_state: dict = {}
     required_outcomes: list[str] = []
+    spend_override: dict = {}
     run_bridges: bool = True
 
 
@@ -132,7 +153,13 @@ app = FastAPI(title="SpeedFlow AI Orchestrator", version="1.0.0", lifespan=lifes
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "agents": ["strategy", "discovery", "processing", "config", "scrape_planner"]}
+    from shared.secrets_provider import provider
+
+    return {
+        "status": "ok",
+        "agents": ["strategy", "discovery", "processing", "config", "scrape_planner"],
+        "secrets_provider": provider(),
+    }
 
 
 @app.post("/orchestrate", response_model=OrchestrationResponse)
@@ -145,15 +172,27 @@ async def orchestrate(req: OrchestrationRequest, background_tasks: BackgroundTas
     # Merge persisted feedback history (Postgres) with any inline feedback so the
     # Strategy Agent reacts to accumulated app metrics, not just this request.
     feedback = list(req.feedback) + load_recent_feedback()
-    strategy_out = await strategy_agent.run(state, feedback=feedback)
-    discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
+    # Real metered spend (usage_records), overridable for what-if FinOps analysis.
+    spend = load_today_spend()
+    spend.update(req.spend_override or {})
+    strategy_out = await strategy_agent.run(state, feedback=feedback, spend=spend)
+    throttle = strategy_out.get("throttle", {})
+
+    # FinOps enforcement: pause discovery / skip scraper dispatch when over budget.
+    if throttle.get("pause_discovery"):
+        discovery_out = {"scraping_targets": [], "discovered_sources": [], "throttled": True}
+    else:
+        discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
     processing_out = await processing_agent.run(state, required_outcomes=req.required_outcomes or None)
     config_out = await config_agent.run(state, desired_state=req.desired_state or None)
 
     bridges_applied = None
     if req.run_bridges:
+        scraper_targets = [] if throttle.get("scrapers") else discovery_out.get("scraping_targets", [])
         bridges_applied = {
-            "scraper_jobs": scraper_bridge.push_targets(discovery_out.get("scraping_targets", [])),
+            "scraper_jobs": scraper_bridge.push_targets(scraper_targets),
+            "scrapers_throttled": bool(throttle.get("scrapers")),
+            "discovery_paused": bool(throttle.get("pause_discovery")),
             "processing": processing_bridge.inject_decisions(processing_out.get("processing_decisions", [])),
             "config": config_bridge.deploy(config_out),
         }
@@ -215,6 +254,27 @@ def feedback_history(hours: int = 24, app_name: str | None = None):
         }
     except Exception as exc:
         raise HTTPException(503, f"feedback history unavailable: {exc}")
+
+
+class GovernanceEvalRequest(BaseModel):
+    scores: dict[str, float]
+
+
+@app.get("/governance/status")
+def governance_status():
+    """Agent registry, versions, drift status, and rollback counts."""
+    return governance.status()
+
+
+@app.post("/governance/evaluate")
+def governance_evaluate(req: GovernanceEvalRequest):
+    """Feed per-agent eval scores; detect drift and roll back if over threshold."""
+    return {"results": {agent: governance.evaluate(agent, score) for agent, score in req.scores.items()}}
+
+
+@app.post("/governance/promote/{agent_name}")
+def governance_promote(agent_name: str):
+    return governance.promote(agent_name)
 
 
 @app.get("/agents/{agent_name}/status")

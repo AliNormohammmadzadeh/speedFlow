@@ -1,0 +1,10 @@
+# Hardened OpenSearch overlay (task 4.3): enables the security plugin + auth.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.opensearch-secure.yml up -d elasticsearch
+# Consumers must then send credentials (ELASTICSEARCH_URL=http://admin:pass@platform-search:9200).
+services:
+  elasticsearch:
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "false"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "SpeedFlow_Admin123!"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"

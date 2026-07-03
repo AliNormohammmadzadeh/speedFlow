@@ -93,3 +93,43 @@ CREATE INDEX IF NOT EXISTS idx_scrape_jobs_tenant ON scrape_jobs(tenant_id, crea
 
 ALTER TABLE processed_events ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(32);
 CREATE INDEX IF NOT EXISTS idx_processed_events_tenant ON processed_events(tenant_id);
+
+-- Phase 4: RBAC/residency, billing/metering, marketplace API-key delivery
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'admin';
+ALTER TABLE tenants ADD COLUMN IF NOT EXISTS region VARCHAR(32) DEFAULT 'us';
+
+CREATE TABLE IF NOT EXISTS usage_records (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(32) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    units DOUBLE PRECISION DEFAULT 1,
+    unit_cost_usd DOUBLE PRECISION DEFAULT 0,
+    cost_usd DOUBLE PRECISION DEFAULT 0,
+    meta JSONB DEFAULT '{}',
+    recorded_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage_records(tenant_id, recorded_at DESC);
+
+CREATE TABLE IF NOT EXISTS invoices (
+    id SERIAL PRIMARY KEY,
+    tenant_id VARCHAR(32) NOT NULL,
+    period VARCHAR(7) NOT NULL,
+    amount_usd DOUBLE PRECISION NOT NULL,
+    breakdown JSONB,
+    status VARCHAR(20) DEFAULT 'draft',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE (tenant_id, period)
+);
+
+ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS order_id VARCHAR(64);
+ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS charge_id VARCHAR(128);
+ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS quantity INT DEFAULT 1;
+
+CREATE TABLE IF NOT EXISTS marketplace_api_keys (
+    id SERIAL PRIMARY KEY,
+    order_id VARCHAR(64) NOT NULL,
+    product_id VARCHAR(100) NOT NULL,
+    customer_id VARCHAR(100) NOT NULL,
+    api_key VARCHAR(128) UNIQUE NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
