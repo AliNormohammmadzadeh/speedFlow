@@ -69,6 +69,24 @@ def persist_feedback(app_name: str, metrics: dict[str, float]) -> int:
     return written
 
 
+def load_today_spend() -> dict:
+    """Aggregate today's metered spend by category from usage_records (FinOps)."""
+    from sqlalchemy import text
+
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT category, COALESCE(SUM(cost_usd),0) AS cost FROM usage_records "
+                    "WHERE recorded_at::date = CURRENT_DATE GROUP BY category"
+                )
+            ).mappings().all()
+        return {r["category"]: float(r["cost"]) for r in rows}
+    except Exception as exc:
+        logger.warning("spend load failed: %s", exc)
+        return {}
+
+
 def load_recent_feedback(hours: int = 24) -> list[dict]:
     """Load recent feedback from Postgres, shaped for the Strategy Agent."""
     from sqlalchemy import text
@@ -107,6 +125,7 @@ class OrchestrationRequest(BaseModel):
     feedback: list[dict] = []
     desired_state: dict = {}
     required_outcomes: list[str] = []
+    spend_override: dict = {}
     run_bridges: bool = True
 
 
@@ -145,15 +164,27 @@ async def orchestrate(req: OrchestrationRequest, background_tasks: BackgroundTas
     # Merge persisted feedback history (Postgres) with any inline feedback so the
     # Strategy Agent reacts to accumulated app metrics, not just this request.
     feedback = list(req.feedback) + load_recent_feedback()
-    strategy_out = await strategy_agent.run(state, feedback=feedback)
-    discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
+    # Real metered spend (usage_records), overridable for what-if FinOps analysis.
+    spend = load_today_spend()
+    spend.update(req.spend_override or {})
+    strategy_out = await strategy_agent.run(state, feedback=feedback, spend=spend)
+    throttle = strategy_out.get("throttle", {})
+
+    # FinOps enforcement: pause discovery / skip scraper dispatch when over budget.
+    if throttle.get("pause_discovery"):
+        discovery_out = {"scraping_targets": [], "discovered_sources": [], "throttled": True}
+    else:
+        discovery_out = await discovery_agent.run(state, data_gaps=strategy_out.get("data_gaps"))
     processing_out = await processing_agent.run(state, required_outcomes=req.required_outcomes or None)
     config_out = await config_agent.run(state, desired_state=req.desired_state or None)
 
     bridges_applied = None
     if req.run_bridges:
+        scraper_targets = [] if throttle.get("scrapers") else discovery_out.get("scraping_targets", [])
         bridges_applied = {
-            "scraper_jobs": scraper_bridge.push_targets(discovery_out.get("scraping_targets", [])),
+            "scraper_jobs": scraper_bridge.push_targets(scraper_targets),
+            "scrapers_throttled": bool(throttle.get("scrapers")),
+            "discovery_paused": bool(throttle.get("pause_discovery")),
             "processing": processing_bridge.inject_decisions(processing_out.get("processing_decisions", [])),
             "config": config_bridge.deploy(config_out),
         }
