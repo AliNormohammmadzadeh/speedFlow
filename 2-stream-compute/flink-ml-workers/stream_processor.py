@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from shared.kafka_avro import create_consumer, create_processed_producer, register_schemas
+from pii import BLOCK_ON_PII, PII_ENABLED, redact
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [processor] %(message)s")
 logger = logging.getLogger(__name__)
@@ -104,6 +105,13 @@ def process_event(raw: dict) -> dict:
     except json.JSONDecodeError:
         payload = {"raw": payload_str}
 
+    # PII redaction (compliance 4.3): scrub sensitive fields/values before the
+    # payload is persisted to Postgres/OpenSearch. Numeric features are computed
+    # from the redacted payload (PII fields are non-numeric, so no signal loss).
+    pii_redacted = 0
+    if PII_ENABLED:
+        payload, pii_redacted = redact(payload)
+
     features = extract_numeric_features(payload)
     strategy = "simple_aggregation"
 
@@ -129,7 +137,12 @@ def process_event(raw: dict) -> dict:
         "predictions": predictions,
         "confidence": min(abs(features.get("momentum", 0)) * 10, 1.0) if features else None,
         "processing_strategy": strategy,
-        "payload": json.dumps({"original": payload, "features": features, "predictions": predictions}),
+        "payload": json.dumps({
+            "original": payload,
+            "features": features,
+            "predictions": predictions,
+            "pii_redacted": pii_redacted,
+        }),
     }
 
 
