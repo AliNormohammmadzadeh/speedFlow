@@ -760,16 +760,16 @@ Goal: Replace MVPs with durable, observable, vertically integrated pipelines.
 
 Goal: Secure multi-tenant SaaS deployable on AWS/K8s with billing and compliance.
 
-- [x] **4.1** Terraform modules for MSK/EKS/RDS/ElastiCache under `infra/terraform/modules/` with `environments/{dev,prod}.tfvars` + S3 backend; `terraform validate` passes (apply needs real AWS creds)
-- [x] **4.2** ArgoCD app-of-apps (`infra/gitops/argocd`) + k8s manifests (`infra/gitops/k8s`); Config Bridge generates an ArgoCD Application and git-commits/pushes manifests for automated sync (`GITOPS_GIT_PUSH`)
+- [x] **4.1** Terraform modules for MSK/EKS/RDS/ElastiCache under `infra/terraform/modules/` with `environments/{dev,prod}.tfvars` + S3 backend; `terraform validate` passes and `make tf-plan` produces the full **16-resource** plan offline (apply needs real AWS creds)
+- [x] **4.2** ArgoCD app-of-apps (`infra/gitops/argocd`) + k8s manifests (`infra/gitops/k8s`, kubeconform-validated via `make k8s-validate`); Config Bridge generates an ArgoCD Application and git-commits/pushes manifests for automated sync (`GITOPS_GIT_PUSH`). Live sync needs a cluster (in-VM kind/k3d blocked by cgroup-v2 nesting)
 - [x] **4.3** PII redaction (`2-stream-compute/.../pii.py`) enforced in the stream processor per `compliance.yaml`; MSK TLS/mTLS/SASL + `infra/security/kafka-acls.sh`; OpenSearch-auth overlay
 - [x] **4.4** OAuth2 JWT (`POST /auth/token`) + RBAC (`role`/`permissions`) in the Platform API; Bearer auth accepted alongside API keys
 - [x] **4.5** Marketplace v2 — payment gateway (Stripe/mock), usage-based pricing, automated data-product API-key delivery, Postgres-persisted orders
 - [x] **4.6** Billing & metering — `usage_records` + `invoices`; scrapes metered; `GET /billing/invoice` = base fee + metered usage
 - [x] **4.7** FinOps loop — Strategy Agent reads real spend (`usage_records`) vs `budgets.yaml` and throttles scrape/compute/LLM + pauses discovery; orchestrator enforces
 - [x] **4.8** Agent governance — drift detection + automated rollback per `agent_governance.yaml`; `/governance/status|evaluate|promote`
-- [x] **4.9** Secrets management — pluggable provider (`env`/Vault/AWS Secrets Manager) via `shared/secrets_provider.py` with env fallback
-- [x] **4.10** Multi-region/DR — MirrorMaker 2 config (`infra/dr/mm2.properties`) + tenant data residency (region validation, `/residency`, per-region clusters)
+- [x] **4.9** Secrets management — pluggable provider (`env`/Vault/AWS Secrets Manager) via `shared/secrets_provider.py` with env fallback; verified end-to-end against a dev **Vault** (`make secrets-demo`, secrets resolved from Vault not env)
+- [x] **4.10** Multi-region/DR — MirrorMaker 2 (`infra/dr/mm2.properties`) + tenant data residency (region validation, `/residency`). Verified real cross-cluster replication with a second Kafka cluster via `make dr-demo` (`raw_stream`/`processed_stream` replicated primary→DR)
 
 ### Phase 5 — Product expansion (after Phase 4)
 
