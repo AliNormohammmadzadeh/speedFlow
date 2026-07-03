@@ -153,7 +153,13 @@ app = FastAPI(title="SpeedFlow AI Orchestrator", version="1.0.0", lifespan=lifes
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "agents": ["strategy", "discovery", "processing", "config", "scrape_planner"]}
+    from shared.secrets_provider import provider
+
+    return {
+        "status": "ok",
+        "agents": ["strategy", "discovery", "processing", "config", "scrape_planner"],
+        "secrets_provider": provider(),
+    }
 
 
 @app.post("/orchestrate", response_model=OrchestrationResponse)
