@@ -20,6 +20,7 @@ from agents.strategy_agent import StrategyAgent
 from bridges.config_bridge import ConfigBridge
 from bridges.processing_bridge import ProcessingBridge
 from bridges.scraper_bridge import ScraperBridge
+from shared.governance import AgentGovernance
 from shared.utils import AgentState
 
 logging.basicConfig(level=logging.INFO)
@@ -118,6 +119,7 @@ config_agent = ConfigAgent()
 scraper_bridge = ScraperBridge()
 processing_bridge = ProcessingBridge()
 config_bridge = ConfigBridge()
+governance = AgentGovernance()
 
 
 class OrchestrationRequest(BaseModel):
@@ -246,6 +248,27 @@ def feedback_history(hours: int = 24, app_name: str | None = None):
         }
     except Exception as exc:
         raise HTTPException(503, f"feedback history unavailable: {exc}")
+
+
+class GovernanceEvalRequest(BaseModel):
+    scores: dict[str, float]
+
+
+@app.get("/governance/status")
+def governance_status():
+    """Agent registry, versions, drift status, and rollback counts."""
+    return governance.status()
+
+
+@app.post("/governance/evaluate")
+def governance_evaluate(req: GovernanceEvalRequest):
+    """Feed per-agent eval scores; detect drift and roll back if over threshold."""
+    return {"results": {agent: governance.evaluate(agent, score) for agent, score in req.scores.items()}}
+
+
+@app.post("/governance/promote/{agent_name}")
+def governance_promote(agent_name: str):
+    return governance.promote(agent_name)
 
 
 @app.get("/agents/{agent_name}/status")
