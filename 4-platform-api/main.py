@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, generate_latest
 from starlette.responses import Response
 
+import auth as auth_mod
 from middleware import TenantQuotaMiddleware, enforce_daily_quota, get_daily_usage
 
 logging.basicConfig(level=logging.INFO)
@@ -119,6 +120,8 @@ class TenantCreate(BaseModel):
     name: str
     plan: str = "starter"
     email: str | None = None
+    role: str = "admin"
+    region: str = "us"
 
 
 class TenantResponse(BaseModel):
@@ -167,6 +170,16 @@ def resolve_tenant(db: Session, api_key: str | None) -> dict:
     return dict(row)
 
 
+def resolve_tenant_by_id(db: Session, tenant_id: str) -> dict:
+    row = db.execute(
+        text("SELECT * FROM tenants WHERE tenant_id = :tid AND active = true"),
+        {"tid": tenant_id},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(401, "Unknown or inactive tenant")
+    return dict(row)
+
+
 def enforce_plan_limits(tenant: dict, scrape_req: ScrapeRequest) -> dict:
     plan = _plans.get(tenant["plan"], _plans.get("starter", {}))
     limits = plan.get("limits", {})
@@ -193,6 +206,13 @@ def _merge_job_row(row: dict, live: dict | None = None) -> ScrapeJobResponse:
 async def lifespan(app: FastAPI):
     global _plans
     _plans = load_plans()
+    # Idempotent migrations for Phase 4 columns (role, billing, residency).
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'admin'"))
+            conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS region VARCHAR(32) DEFAULT 'us'"))
+    except Exception as exc:
+        logger.warning("startup migration skipped: %s", exc)
     logger.info("Platform API started with %d subscription plans", len(_plans))
     yield
     if _redis:
@@ -212,6 +232,7 @@ app.add_middleware(
     get_redis=get_redis,
     resolve_tenant_fn=resolve_tenant,
     get_db_fn=get_db,
+    resolve_tenant_by_id_fn=resolve_tenant_by_id,
 )
 
 @app.get("/metrics")
@@ -236,10 +257,11 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
 
     db.execute(
         text("""
-            INSERT INTO tenants (tenant_id, name, email, plan, api_key, kafka_topic_prefix, active)
-            VALUES (:tid, :name, :email, :plan, :key, :prefix, true)
+            INSERT INTO tenants (tenant_id, name, email, plan, api_key, kafka_topic_prefix, active, role, region)
+            VALUES (:tid, :name, :email, :plan, :key, :prefix, true, :role, :region)
         """),
-        {"tid": tenant_id, "name": req.name, "email": req.email, "plan": req.plan, "key": api_key, "prefix": topic_prefix},
+        {"tid": tenant_id, "name": req.name, "email": req.email, "plan": req.plan, "key": api_key,
+         "prefix": topic_prefix, "role": req.role, "region": req.region},
     )
     db.commit()
 
@@ -261,6 +283,50 @@ def create_tenant(req: TenantCreate, db: Session = Depends(get_db)):
         kafka_topic_prefix=topic_prefix,
         features=features,
     )
+
+
+class TokenRequest(BaseModel):
+    api_key: str
+
+
+@app.post("/auth/token")
+def issue_token(req: TokenRequest, db: Session = Depends(get_db)):
+    """OAuth2-style token exchange: trade a tenant API key for a short-lived JWT."""
+    tenant = resolve_tenant(db, req.api_key)
+    role = tenant.get("role") or "admin"
+    token = auth_mod.issue_token(tenant["tenant_id"], role, tenant["plan"])
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": auth_mod.JWT_TTL_SECONDS,
+        "role": role,
+        "permissions": auth_mod.permissions_for(role),
+    }
+
+
+def require_permission(permission: str):
+    """FastAPI dependency enforcing an RBAC permission from the request principal."""
+
+    def _dep(request: Request):
+        perms = getattr(request.state, "permissions", [])
+        if not auth_mod.has_permission(perms, permission):
+            raise HTTPException(403, f"Missing required permission: {permission}")
+        return True
+
+    return _dep
+
+
+@app.get("/admin/tenants")
+def admin_list_tenants(
+    request: Request,
+    db: Session = Depends(get_db),
+    _: bool = Depends(require_permission("deploy")),
+):
+    """Admin/operator-only tenant listing (RBAC-gated; analysts are denied)."""
+    rows = db.execute(
+        text("SELECT tenant_id, name, plan, role, region, active FROM tenants ORDER BY created_at DESC LIMIT 100")
+    ).mappings().all()
+    return {"count": len(rows), "tenants": [dict(r) for r in rows]}
 
 
 @app.get("/tenants/me", response_model=TenantResponse)
@@ -303,11 +369,14 @@ async def tenant_usage(
 @app.post("/scrape", response_model=ScrapeJobResponse)
 async def request_scrape(
     req: ScrapeRequest,
+    request: Request,
     db: Session = Depends(get_db),
     redis: aioredis.Redis = Depends(get_redis),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
 ):
-    tenant = resolve_tenant(db, x_api_key)
+    # Accept either the middleware-resolved principal (Bearer JWT or API key) or
+    # a direct X-API-Key on the request.
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
     plan = enforce_plan_limits(tenant, req)
     limits = plan.get("limits", {})
     features = plan.get("features", {})
