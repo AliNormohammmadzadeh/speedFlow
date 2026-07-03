@@ -170,6 +170,26 @@ def resolve_tenant(db: Session, api_key: str | None) -> dict:
     return dict(row)
 
 
+# Per-unit cost estimates (USD) for metering, mirrors config/finops/budgets.yaml.
+SCRAPE_UNIT_COST = float(os.environ.get("SCRAPE_UNIT_COST_USD", "0.01"))
+
+
+def record_usage(tenant_id: str, category: str, units: float, unit_cost: float, meta: dict | None = None) -> None:
+    """Meter resource usage into usage_records for billing + FinOps."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO usage_records (tenant_id, category, units, unit_cost_usd, cost_usd, meta) "
+                    "VALUES (:tid, :cat, :units, :uc, :cost, CAST(:meta AS JSONB))"
+                ),
+                {"tid": tenant_id, "cat": category, "units": units, "uc": unit_cost,
+                 "cost": round(units * unit_cost, 6), "meta": json.dumps(meta or {})},
+            )
+    except Exception as exc:
+        logger.warning("usage metering failed: %s", exc)
+
+
 def resolve_tenant_by_id(db: Session, tenant_id: str) -> dict:
     row = db.execute(
         text("SELECT * FROM tenants WHERE tenant_id = :tid AND active = true"),
@@ -211,6 +231,19 @@ async def lifespan(app: FastAPI):
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS role VARCHAR(32) DEFAULT 'admin'"))
             conn.execute(text("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS region VARCHAR(32) DEFAULT 'us'"))
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS usage_records ("
+                "id SERIAL PRIMARY KEY, tenant_id VARCHAR(32) NOT NULL, category VARCHAR(32) NOT NULL, "
+                "units DOUBLE PRECISION DEFAULT 1, unit_cost_usd DOUBLE PRECISION DEFAULT 0, "
+                "cost_usd DOUBLE PRECISION DEFAULT 0, meta JSONB DEFAULT '{}', recorded_at TIMESTAMPTZ DEFAULT NOW())"
+            ))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS idx_usage_tenant ON usage_records(tenant_id, recorded_at DESC)"))
+            conn.execute(text(
+                "CREATE TABLE IF NOT EXISTS invoices ("
+                "id SERIAL PRIMARY KEY, tenant_id VARCHAR(32) NOT NULL, period VARCHAR(7) NOT NULL, "
+                "amount_usd DOUBLE PRECISION NOT NULL, breakdown JSONB, status VARCHAR(20) DEFAULT 'draft', "
+                "created_at TIMESTAMPTZ DEFAULT NOW(), UNIQUE (tenant_id, period))"
+            ))
     except Exception as exc:
         logger.warning("startup migration skipped: %s", exc)
     logger.info("Platform API started with %d subscription plans", len(_plans))
@@ -329,6 +362,48 @@ def admin_list_tenants(
     return {"count": len(rows), "tenants": [dict(r) for r in rows]}
 
 
+@app.get("/billing/invoice")
+def billing_invoice(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    """Generate the current-month invoice from metered usage + plan base fee."""
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
+    period = datetime.now(timezone.utc).strftime("%Y-%m")
+    plan = _plans.get(tenant["plan"], {})
+    base_fee = float(plan.get("price_usd_monthly", plan.get("price_usd", 0)) or 0)
+
+    rows = db.execute(
+        text(
+            "SELECT category, SUM(units) AS units, SUM(cost_usd) AS cost FROM usage_records "
+            "WHERE tenant_id = :tid AND to_char(recorded_at, 'YYYY-MM') = :period GROUP BY category"
+        ),
+        {"tid": tenant["tenant_id"], "period": period},
+    ).mappings().all()
+
+    usage_breakdown = {r["category"]: {"units": float(r["units"]), "cost_usd": round(float(r["cost"]), 4)} for r in rows}
+    usage_total = sum(v["cost_usd"] for v in usage_breakdown.values())
+    total = round(base_fee + usage_total, 2)
+    breakdown = {"base_fee_usd": base_fee, "usage": usage_breakdown, "usage_total_usd": round(usage_total, 4)}
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO invoices (tenant_id, period, amount_usd, breakdown, status) "
+                    "VALUES (:tid, :period, :amt, CAST(:bd AS JSONB), 'draft') "
+                    "ON CONFLICT (tenant_id, period) DO UPDATE SET amount_usd = EXCLUDED.amount_usd, "
+                    "breakdown = EXCLUDED.breakdown"
+                ),
+                {"tid": tenant["tenant_id"], "period": period, "amt": total, "bd": json.dumps(breakdown)},
+            )
+    except Exception as exc:
+        logger.warning("invoice upsert failed: %s", exc)
+
+    return {"tenant_id": tenant["tenant_id"], "period": period, "amount_usd": total, "breakdown": breakdown}
+
+
 @app.get("/tenants/me", response_model=TenantResponse)
 def get_current_tenant(
     db: Session = Depends(get_db),
@@ -405,6 +480,9 @@ async def request_scrape(
             raise HTTPException(502, f"Scrape planner failed: {resp.text}")
         result = resp.json()
     SCRAPES_SUBMITTED.labels(plan=tenant["plan"]).inc()
+    # Meter scrape usage for billing + FinOps (units = requested pages).
+    pages = req.max_pages or limits.get("max_pages_per_job", 20)
+    record_usage(tenant["tenant_id"], "scrape", float(pages), SCRAPE_UNIT_COST, {"job_id": result.get("job_id")})
 
     job_id = result.get("job_id", "unknown")
     db.execute(
