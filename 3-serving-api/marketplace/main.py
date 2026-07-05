@@ -60,6 +60,22 @@ def _ensure_tables() -> None:
         conn.execute(text(
             "ALTER TABLE marketplace_orders ADD COLUMN IF NOT EXISTS quantity INT DEFAULT 1"
         ))
+        # Task 5.4: tenant-published datasets + revenue share.
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS marketplace_datasets ("
+            "id SERIAL PRIMARY KEY, dataset_id VARCHAR(64) UNIQUE NOT NULL, "
+            "publisher_tenant VARCHAR(64) NOT NULL, name VARCHAR(200) NOT NULL, "
+            "description TEXT, vertical VARCHAR(100), price_usd DOUBLE PRECISION DEFAULT 0, "
+            "revenue_share_pct DOUBLE PRECISION DEFAULT 70, sales_count INT DEFAULT 0, "
+            "published BOOLEAN DEFAULT TRUE, created_at TIMESTAMPTZ DEFAULT NOW())"
+        ))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS dataset_sales ("
+            "id SERIAL PRIMARY KEY, sale_id VARCHAR(64) UNIQUE NOT NULL, dataset_id VARCHAR(64) NOT NULL, "
+            "buyer_id VARCHAR(100) NOT NULL, price_usd DOUBLE PRECISION NOT NULL, "
+            "publisher_earning_usd DOUBLE PRECISION NOT NULL, platform_fee_usd DOUBLE PRECISION NOT NULL, "
+            "api_key VARCHAR(128), charge_id VARCHAR(128), created_at TIMESTAMPTZ DEFAULT NOW())"
+        ))
 
 
 def load_catalog() -> list[dict]:
@@ -205,6 +221,168 @@ def get_order(order_id: str):
     if not row:
         raise HTTPException(404, "Order not found")
     return dict(row)
+
+
+DEFAULT_REVENUE_SHARE_PCT = float(os.environ.get("DATASET_REVENUE_SHARE_PCT", "70"))
+
+
+class DatasetPublish(BaseModel):
+    publisher_tenant: str
+    name: str
+    description: str = ""
+    vertical: str | None = None
+    price_usd: float = 0.0
+    revenue_share_pct: float | None = None
+
+
+class DatasetPurchase(BaseModel):
+    buyer_id: str
+    payment_token: str | None = None
+
+
+@app.post("/datasets")
+def publish_dataset(req: DatasetPublish):
+    """Publish a tenant-owned dataset for sale with a revenue-share split."""
+    from sqlalchemy import text
+
+    dataset_id = f"ds_{uuid.uuid4().hex[:12]}"
+    share = req.revenue_share_pct if req.revenue_share_pct is not None else DEFAULT_REVENUE_SHARE_PCT
+    share = max(0.0, min(100.0, share))
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO marketplace_datasets (dataset_id, publisher_tenant, name, description, "
+                    "vertical, price_usd, revenue_share_pct) VALUES (:did, :pt, :name, :desc, :vert, :price, :share)"
+                ),
+                {"did": dataset_id, "pt": req.publisher_tenant, "name": req.name, "desc": req.description,
+                 "vert": req.vertical, "price": req.price_usd, "share": share},
+            )
+    except Exception as exc:
+        raise HTTPException(503, f"dataset publish failed: {exc}")
+    return {
+        "dataset_id": dataset_id, "publisher_tenant": req.publisher_tenant, "name": req.name,
+        "price_usd": req.price_usd, "revenue_share_pct": share, "published": True,
+    }
+
+
+@app.get("/datasets")
+def list_datasets(publisher_tenant: str | None = None):
+    from sqlalchemy import text
+
+    query = ("SELECT dataset_id, publisher_tenant, name, description, vertical, price_usd, "
+             "revenue_share_pct, sales_count, published, created_at FROM marketplace_datasets "
+             "WHERE published = TRUE")
+    params: dict = {}
+    if publisher_tenant:
+        query += " AND publisher_tenant = :pt"
+        params["pt"] = publisher_tenant
+    query += " ORDER BY created_at DESC LIMIT 100"
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(query), params).mappings().all()
+        return {"datasets": [dict(r) | {"created_at": r["created_at"].isoformat() if r["created_at"] else None} for r in rows]}
+    except Exception:
+        return {"datasets": []}
+
+
+@app.get("/datasets/{dataset_id}")
+def get_dataset(dataset_id: str):
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        row = conn.execute(
+            text("SELECT * FROM marketplace_datasets WHERE dataset_id = :did"), {"did": dataset_id}
+        ).mappings().first()
+    if not row:
+        raise HTTPException(404, "Dataset not found")
+    data = dict(row)
+    if data.get("created_at"):
+        data["created_at"] = data["created_at"].isoformat()
+    return data
+
+
+@app.post("/datasets/{dataset_id}/purchase")
+def purchase_dataset(dataset_id: str, req: DatasetPurchase):
+    """Buy a dataset; splits revenue between publisher and platform, delivers API key."""
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        ds = conn.execute(
+            text("SELECT * FROM marketplace_datasets WHERE dataset_id = :did AND published = TRUE"),
+            {"did": dataset_id},
+        ).mappings().first()
+    if not ds:
+        raise HTTPException(404, "Dataset not found")
+
+    price = float(ds["price_usd"])
+    result = payments.charge(price, req.buyer_id, f"SpeedFlow dataset: {ds['name']}")
+    if result["status"] not in ("succeeded", "no_charge"):
+        raise HTTPException(402, f"Payment failed: {result['status']}")
+
+    share_pct = float(ds["revenue_share_pct"])
+    publisher_earning = round(price * share_pct / 100.0, 4)
+    platform_fee = round(price - publisher_earning, 4)
+    sale_id = f"sale_{uuid.uuid4().hex[:12]}"
+    delivered_key = f"dp_{secrets.token_urlsafe(24)}"
+
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO dataset_sales (sale_id, dataset_id, buyer_id, price_usd, "
+                    "publisher_earning_usd, platform_fee_usd, api_key, charge_id) "
+                    "VALUES (:sid, :did, :bid, :price, :earn, :fee, :key, :charge)"
+                ),
+                {"sid": sale_id, "did": dataset_id, "bid": req.buyer_id, "price": price,
+                 "earn": publisher_earning, "fee": platform_fee, "key": delivered_key, "charge": result["charge_id"]},
+            )
+            conn.execute(
+                text("UPDATE marketplace_datasets SET sales_count = sales_count + 1 WHERE dataset_id = :did"),
+                {"did": dataset_id},
+            )
+    except Exception as exc:
+        raise HTTPException(503, f"sale persistence failed: {exc}")
+
+    send_feedback(os.environ.get("APP_NAME", "data_marketplace"), {
+        "api_calls": 1.0, "revenue_usd": platform_fee, "top_product_demand": 1.0,
+    })
+    return {
+        "sale_id": sale_id, "dataset_id": dataset_id, "buyer_id": req.buyer_id,
+        "price_usd": price, "publisher_earning_usd": publisher_earning,
+        "platform_fee_usd": platform_fee, "revenue_share_pct": share_pct,
+        "api_key": delivered_key, "charge_id": result["charge_id"], "provider": result["provider"],
+    }
+
+
+@app.get("/datasets/{dataset_id}/revenue")
+def dataset_revenue(dataset_id: str):
+    """Revenue-share report for a published dataset."""
+    from sqlalchemy import text
+
+    with get_engine().connect() as conn:
+        ds = conn.execute(
+            text("SELECT dataset_id, publisher_tenant, name, revenue_share_pct FROM marketplace_datasets WHERE dataset_id = :did"),
+            {"did": dataset_id},
+        ).mappings().first()
+        if not ds:
+            raise HTTPException(404, "Dataset not found")
+        agg = conn.execute(
+            text("SELECT COUNT(*) AS sales, COALESCE(SUM(price_usd),0) AS gross, "
+                 "COALESCE(SUM(publisher_earning_usd),0) AS earnings, COALESCE(SUM(platform_fee_usd),0) AS fees "
+                 "FROM dataset_sales WHERE dataset_id = :did"),
+            {"did": dataset_id},
+        ).mappings().first()
+    return {
+        "dataset_id": ds["dataset_id"],
+        "publisher_tenant": ds["publisher_tenant"],
+        "name": ds["name"],
+        "revenue_share_pct": float(ds["revenue_share_pct"]),
+        "total_sales": int(agg["sales"]),
+        "gross_revenue_usd": round(float(agg["gross"]), 2),
+        "publisher_earnings_usd": round(float(agg["earnings"]), 2),
+        "platform_fees_usd": round(float(agg["fees"]), 2),
+    }
 
 
 @app.get("/demand/summary")

@@ -1,0 +1,22 @@
+# Vertical plug-in: Retail & E-commerce (task 5.2)
+# Drop-in extension loaded by VerticalRegistry from config/verticals/*.yaml.
+
+id: retail_ecommerce
+name: "Retail & E-commerce"
+priority: 4
+description: "Product prices, stock availability, competitor catalogs, review sentiment"
+reference_pipelines:
+  - raw_topic: raw_stream
+    processed_topic: processed_stream
+    flink_job: price_normalizer
+    ml_model: demand_forecast
+seed_sources:
+  - name: shopify_products_rest
+    type: rest
+    url: "https://example-store.myshopify.com/products.json"
+    value_score: 0.80
+  - name: amazon_bestsellers_crawler
+    type: crawlee
+    url: "https://www.amazon.com/gp/bestsellers"
+    value_score: 0.83
+target_apps: [data_marketplace, meta_dashboard]
