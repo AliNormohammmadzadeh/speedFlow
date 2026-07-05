@@ -1,0 +1,19 @@
+{
+  "name": "SpeedFlow Control Portal",
+  "short_name": "SpeedFlow",
+  "description": "AI-driven multi-tenant data platform control portal",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08080f",
+  "theme_color": "#08080f",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
