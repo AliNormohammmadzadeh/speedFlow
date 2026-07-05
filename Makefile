@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate start-serving
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -50,6 +50,10 @@ start-apps:
 
 start-pipeline:
 	bash scripts/start-pipeline.sh
+
+# Serving-layer apps on host (trading bot :8011, marketplace :8014) — Phase 5 features
+start-serving:
+	bash scripts/start-serving-local.sh
 
 stop-local:
 	bash scripts/stop-local.sh

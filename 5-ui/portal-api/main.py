@@ -25,6 +25,15 @@ DATABASE_URL = (
 )
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
+_redis: aioredis.Redis | None = None
+
+
+def get_redis() -> aioredis.Redis:
+    global _redis
+    if _redis is None:
+        _redis = aioredis.from_url(os.environ.get("REDIS_URL", "redis://redis:6379/0"))
+    return _redis
+
 SERVICES = {
     "platform_api": os.environ.get("PLATFORM_API_URL", "http://platform-api:8020"),
     "orchestrator": os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8000"),
@@ -318,6 +327,235 @@ async def schemas():
             return {"subjects": r.json() if r.status_code == 200 else []}
     except Exception:
         return {"subjects": []}
+
+
+# --- Phase 5.1: self-serve billing, usage analytics, plan upgrades ---
+class PlanChange(BaseModel):
+    api_key: str
+    plan: str
+
+
+@app.post("/api/tenants/plan")
+async def change_plan(req: PlanChange):
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(
+                f"{SERVICES['platform_api']}/tenants/plan",
+                headers={"X-API-Key": req.api_key},
+                json={"plan": req.plan},
+            )
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Platform API unavailable: {exc}") from exc
+
+
+async def _proxy_get(service: str, path: str, api_key: str | None = None, params: dict | None = None):
+    headers = {"X-API-Key": api_key} if api_key else {}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(f"{SERVICES[service]}{path}", headers=headers, params=params or {})
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"{service} unavailable: {exc}") from exc
+
+
+@app.get("/api/billing/invoice")
+async def billing_invoice(api_key: str):
+    return await _proxy_get("platform_api", "/billing/invoice", api_key)
+
+
+@app.get("/api/usage")
+async def tenant_usage(api_key: str):
+    return await _proxy_get("platform_api", "/usage", api_key)
+
+
+@app.get("/api/usage/analytics")
+async def usage_analytics(api_key: str, days: int = 30):
+    return await _proxy_get("platform_api", "/usage/analytics", api_key, {"days": days})
+
+
+@app.get("/api/ratelimits/me")
+async def ratelimit_me(api_key: str):
+    return await _proxy_get("platform_api", "/ratelimits/me", api_key)
+
+
+# --- Phase 5.5: platform-wide API rate-limit dashboard (DB + Redis) ---
+@app.get("/api/ratelimits")
+async def ratelimits():
+    from datetime import datetime as _dt
+
+    plans: dict = {}
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(f"{SERVICES['platform_api']}/features")
+            if r.status_code == 200:
+                plans = r.json().get("plans", {})
+    except Exception:
+        plans = {}
+
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("SELECT tenant_id, name, plan FROM tenants WHERE active = true ORDER BY created_at DESC LIMIT 200")
+            ).mappings().all()
+    except Exception:
+        return {"count": 0, "throttled": [], "tenants": []}
+
+    today = _dt.now(timezone.utc).strftime("%Y%m%d")
+    redis = get_redis()
+    tenants = []
+    for row in rows:
+        limit = plans.get(row["plan"], {}).get("limits", {}).get("scrape_requests_per_day", 50)
+        try:
+            raw = await redis.get(f"tenant:{row['tenant_id']}:scrape_count:{today}")
+            used = int(raw) if raw else 0
+        except Exception:
+            used = 0
+        tenants.append({
+            "tenant_id": row["tenant_id"], "name": row["name"], "plan": row["plan"],
+            "used": used, "limit": limit, "remaining": max(0, limit - used),
+            "utilization_pct": round(100 * used / limit, 1) if limit else 0.0,
+        })
+    tenants.sort(key=lambda t: t["utilization_pct"], reverse=True)
+    return {"count": len(tenants), "throttled": [t for t in tenants if t["remaining"] == 0], "tenants": tenants}
+
+
+# --- Phase 5.2: vertical plug-in framework ---
+class VerticalRegister(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    priority: int = 99
+    seed_sources: list[dict] = []
+    target_apps: list[str] = []
+
+
+@app.get("/api/verticals")
+async def list_verticals():
+    try:
+        return await _proxy_get("orchestrator", "/verticals")
+    except HTTPException:
+        return {"count": 0, "sources": [], "verticals": []}
+
+
+@app.post("/api/verticals")
+async def register_vertical(req: VerticalRegister):
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{SERVICES['orchestrator']}/verticals", json=req.model_dump())
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Orchestrator unavailable: {exc}") from exc
+
+
+# --- Phase 5.3: trading bot risk, backtesting, broker ---
+@app.get("/api/trading/risk")
+async def trading_risk():
+    try:
+        return await _proxy_get("trading_bot", "/risk")
+    except HTTPException:
+        return {}
+
+
+@app.post("/api/trading/risk")
+async def update_trading_risk(body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{SERVICES['trading_bot']}/risk", json=body)
+            return r.json() if r.status_code == 200 else {}
+    except Exception as exc:
+        raise HTTPException(502, f"Trading bot unavailable: {exc}") from exc
+
+
+@app.post("/api/trading/backtest")
+async def trading_backtest(body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(f"{SERVICES['trading_bot']}/backtest", json=body)
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Trading bot unavailable: {exc}") from exc
+
+
+@app.get("/api/trading/positions")
+async def trading_positions():
+    try:
+        return await _proxy_get("trading_bot", "/broker/positions")
+    except HTTPException:
+        return {"provider": "mock", "cash_usd": 0, "positions": [], "recent_orders": []}
+
+
+@app.post("/api/trading/broker/order")
+async def trading_broker_order(body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(f"{SERVICES['trading_bot']}/broker/order", json=body)
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Trading bot unavailable: {exc}") from exc
+
+
+# --- Phase 5.4: marketplace tenant-published datasets ---
+@app.get("/api/marketplace/datasets")
+async def list_datasets(publisher_tenant: str | None = None):
+    params = {"publisher_tenant": publisher_tenant} if publisher_tenant else None
+    try:
+        return await _proxy_get("marketplace", "/datasets", params=params)
+    except HTTPException:
+        return {"datasets": []}
+
+
+@app.post("/api/marketplace/datasets")
+async def publish_dataset(body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{SERVICES['marketplace']}/datasets", json=body)
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Marketplace unavailable: {exc}") from exc
+
+
+@app.post("/api/marketplace/datasets/{dataset_id}/purchase")
+async def purchase_dataset(dataset_id: str, body: dict):
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(f"{SERVICES['marketplace']}/datasets/{dataset_id}/purchase", json=body)
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Marketplace unavailable: {exc}") from exc
+
+
+@app.get("/api/marketplace/datasets/{dataset_id}/revenue")
+async def dataset_revenue(dataset_id: str):
+    return await _proxy_get("marketplace", f"/datasets/{dataset_id}/revenue")
 
 
 LOG_PATHS = {
