@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Area, AreaChart, Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { api } from '../api'
 import { Card, ClickableRow, PageHeader, usePoll } from '../components/ui'
@@ -12,7 +13,38 @@ export default function Applications() {
   const { data: timeseries } = usePoll(() => api.dashboardTimeseries())
   const { data: byVertical } = usePoll(() => api.dashboardByVertical())
   const { data: overview } = usePoll(() => api.overview())
+  const { data: datasets, refresh: refreshDatasets } = usePoll(() => api.datasets(), 5000)
   const { openDetail } = useDetail()
+
+  const [dsName, setDsName] = useState('BTC Order-Book Snapshots')
+  const [dsPrice, setDsPrice] = useState(49)
+  const [dsShare, setDsShare] = useState(70)
+  const [dsMsg, setDsMsg] = useState('')
+
+  const publishDataset = async () => {
+    try {
+      const r = await api.publishDataset({
+        publisher_tenant: 'demo-tenant', name: dsName,
+        description: 'Tenant-published dataset', price_usd: Number(dsPrice),
+        revenue_share_pct: Number(dsShare), vertical: 'financial_markets',
+      })
+      setDsMsg(`Published ${r.dataset_id} (${r.revenue_share_pct}% to publisher)`)
+      refreshDatasets()
+    } catch (e) {
+      setDsMsg(String(e))
+    }
+  }
+
+  const buyDataset = async (id: string) => {
+    try {
+      const r = await api.purchaseDataset(id, { buyer_id: 'demo-buyer' })
+      const rev = await api.datasetRevenue(id)
+      openDetail({ title: 'Purchase complete', subtitle: id, kind: 'generic', data: { sale: r, revenue_report: rev } })
+      refreshDatasets()
+    } catch (e) {
+      setDsMsg(String(e))
+    }
+  }
 
   const tsData = (timeseries?.series ?? []).map((b: any) => ({
     time: new Date(b.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -148,6 +180,30 @@ export default function Applications() {
                 <span className="text-accent-cyan">${p.price_usd ?? p.price ?? '—'}</span>
               </ClickableRow>
             )) || <p className="text-white/40">No products — click for marketplace service status</p>}
+          </div>
+        </Card>
+
+        <Card>
+          <h3 className="mb-4 text-lg font-semibold">Publish & Sell Datasets</h3>
+          <div className="mb-4 space-y-2">
+            <input className="input-field" value={dsName} onChange={e => setDsName(e.target.value)} placeholder="Dataset name" />
+            <div className="flex gap-2">
+              <input className="input-field" type="number" value={dsPrice} onChange={e => setDsPrice(Number(e.target.value))} placeholder="Price USD" />
+              <input className="input-field" type="number" value={dsShare} onChange={e => setDsShare(Number(e.target.value))} placeholder="Revenue share %" />
+            </div>
+            <button type="button" onClick={publishDataset} className="btn-action-primary w-full">Publish Dataset</button>
+            {dsMsg && <p className="text-sm text-white/60">{dsMsg}</p>}
+          </div>
+          <div className="max-h-52 space-y-2 overflow-y-auto">
+            {(datasets?.datasets ?? []).map((d: any) => (
+              <div key={d.dataset_id} className="flex items-center gap-2 rounded-xl bg-white/5 p-2 text-sm">
+                <span className="min-w-0 flex-1 truncate">{d.name}</span>
+                <span className="text-white/40">{d.sales_count} sold</span>
+                <span className="text-accent-cyan">${d.price_usd}</span>
+                <button type="button" onClick={() => buyDataset(d.dataset_id)} className="btn-action-secondary px-3 py-1 text-xs">Buy</button>
+              </div>
+            ))}
+            {!(datasets?.datasets ?? []).length && <p className="py-3 text-center text-white/40">No datasets published yet</p>}
           </div>
         </Card>
 

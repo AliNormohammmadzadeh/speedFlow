@@ -427,6 +427,134 @@ def billing_invoice(
     return {"tenant_id": tenant["tenant_id"], "period": period, "amount_usd": total, "breakdown": breakdown}
 
 
+class PlanChangeRequest(BaseModel):
+    plan: str
+
+
+@app.post("/tenants/plan")
+def change_plan(
+    req: PlanChangeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    """Self-serve plan upgrade/downgrade for the authenticated tenant."""
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
+    if req.plan not in _plans:
+        raise HTTPException(400, f"Unknown plan: {req.plan}. Available: {list(_plans.keys())}")
+
+    old_plan = tenant["plan"]
+    db.execute(
+        text("UPDATE tenants SET plan = :plan WHERE tenant_id = :tid"),
+        {"plan": req.plan, "tid": tenant["tenant_id"]},
+    )
+    db.commit()
+
+    new_features = _plans[req.plan].get("features", {})
+    # Provision a dedicated topic if the new plan grants one and the old one didn't.
+    if new_features.get("dedicated_kafka_topic") and not _plans.get(old_plan, {}).get("features", {}).get("dedicated_kafka_topic"):
+        provision_tenant_topic(tenant["tenant_id"])
+
+    # Meter the plan change (0-cost audit trail row).
+    record_usage(tenant["tenant_id"], "plan_change", 1.0, 0.0, {"from": old_plan, "to": req.plan})
+
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "old_plan": old_plan,
+        "new_plan": req.plan,
+        "features": new_features,
+        "limits": _plans[req.plan].get("limits", {}),
+    }
+
+
+@app.get("/usage/analytics")
+def usage_analytics(
+    request: Request,
+    db: Session = Depends(get_db),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    days: int = 30,
+):
+    """Daily metered-usage timeseries + category breakdown for the tenant."""
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
+    days = max(1, min(days, 365))
+
+    series_rows = db.execute(
+        text(
+            "SELECT to_char(recorded_at, 'YYYY-MM-DD') AS day, SUM(units) AS units, SUM(cost_usd) AS cost "
+            "FROM usage_records WHERE tenant_id = :tid "
+            "AND recorded_at > NOW() - make_interval(days => :d) "
+            "GROUP BY day ORDER BY day"
+        ),
+        {"tid": tenant["tenant_id"], "d": days},
+    ).mappings().all()
+    cat_rows = db.execute(
+        text(
+            "SELECT category, SUM(units) AS units, SUM(cost_usd) AS cost "
+            "FROM usage_records WHERE tenant_id = :tid "
+            "AND recorded_at > NOW() - make_interval(days => :d) GROUP BY category"
+        ),
+        {"tid": tenant["tenant_id"], "d": days},
+    ).mappings().all()
+
+    series = [{"day": r["day"], "units": float(r["units"] or 0), "cost_usd": round(float(r["cost"] or 0), 4)} for r in series_rows]
+    by_category = {r["category"]: {"units": float(r["units"] or 0), "cost_usd": round(float(r["cost"] or 0), 4)} for r in cat_rows}
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "days": days,
+        "total_cost_usd": round(sum(s["cost_usd"] for s in series), 4),
+        "series": series,
+        "by_category": by_category,
+    }
+
+
+async def _tenant_ratelimit_row(redis: aioredis.Redis, tenant: dict) -> dict:
+    plan = _plans.get(tenant["plan"], {})
+    limit = plan.get("limits", {}).get("scrape_requests_per_day", 50)
+    usage = await get_daily_usage(redis, tenant["tenant_id"])
+    used = usage["scrape_requests_used"]
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "name": tenant.get("name"),
+        "plan": tenant["plan"],
+        "used": used,
+        "limit": limit,
+        "remaining": max(0, limit - used),
+        "utilization_pct": round(100 * used / limit, 1) if limit else 0.0,
+    }
+
+
+@app.get("/ratelimits/me")
+async def ratelimit_me(
+    request: Request,
+    db: Session = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+):
+    """The authenticated tenant's own daily rate-limit utilization."""
+    tenant = getattr(request.state, "tenant", None) or resolve_tenant(db, x_api_key)
+    return await _tenant_ratelimit_row(redis, tenant)
+
+
+@app.get("/ratelimits")
+async def ratelimits(
+    request: Request,
+    db: Session = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+    _: bool = Depends(require_permission("deploy")),
+):
+    """Platform-wide API rate-limit dashboard: per-tenant daily quota utilization."""
+    rows = db.execute(
+        text("SELECT * FROM tenants WHERE active = true ORDER BY created_at DESC LIMIT 200")
+    ).mappings().all()
+    tenants = [await _tenant_ratelimit_row(redis, dict(r)) for r in rows]
+    tenants.sort(key=lambda t: t["utilization_pct"], reverse=True)
+    return {
+        "count": len(tenants),
+        "throttled": [t for t in tenants if t["remaining"] == 0],
+        "tenants": tenants,
+    }
+
+
 @app.get("/tenants/me", response_model=TenantResponse)
 def get_current_tenant(
     db: Session = Depends(get_db),

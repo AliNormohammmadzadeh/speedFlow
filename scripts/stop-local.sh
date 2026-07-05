@@ -2,7 +2,7 @@
 # Stop SpeedFlow host processes started by start-apps.sh / start-pipeline.sh
 set -euo pipefail
 
-for name in portal platform-api orchestrator crawlee-worker stream-processor; do
+for name in portal platform-api orchestrator crawlee-worker stream-processor trading-bot marketplace; do
   pidfile="/tmp/speedflow-pids/$name.pid"
   if [ -f "$pidfile" ]; then
     pid=$(cat "$pidfile")
@@ -14,5 +14,5 @@ for name in portal platform-api orchestrator crawlee-worker stream-processor; do
   fi
 done
 
-fuser -k 8020/tcp 8000/tcp 8030/tcp 2>/dev/null || true
+fuser -k 8020/tcp 8000/tcp 8030/tcp 8011/tcp 8014/tcp 2>/dev/null || true
 echo "Done."

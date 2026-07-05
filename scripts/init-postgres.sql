@@ -133,3 +133,32 @@ CREATE TABLE IF NOT EXISTS marketplace_api_keys (
     api_key VARCHAR(128) UNIQUE NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Phase 5.4: tenant-published datasets + revenue share
+CREATE TABLE IF NOT EXISTS marketplace_datasets (
+    id SERIAL PRIMARY KEY,
+    dataset_id VARCHAR(64) UNIQUE NOT NULL,
+    publisher_tenant VARCHAR(64) NOT NULL,
+    name VARCHAR(200) NOT NULL,
+    description TEXT,
+    vertical VARCHAR(100),
+    price_usd DOUBLE PRECISION DEFAULT 0,
+    revenue_share_pct DOUBLE PRECISION DEFAULT 70,
+    sales_count INT DEFAULT 0,
+    published BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS dataset_sales (
+    id SERIAL PRIMARY KEY,
+    sale_id VARCHAR(64) UNIQUE NOT NULL,
+    dataset_id VARCHAR(64) NOT NULL,
+    buyer_id VARCHAR(100) NOT NULL,
+    price_usd DOUBLE PRECISION NOT NULL,
+    publisher_earning_usd DOUBLE PRECISION NOT NULL,
+    platform_fee_usd DOUBLE PRECISION NOT NULL,
+    api_key VARCHAR(128),
+    charge_id VARCHAR(128),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dataset_sales_dataset ON dataset_sales(dataset_id);

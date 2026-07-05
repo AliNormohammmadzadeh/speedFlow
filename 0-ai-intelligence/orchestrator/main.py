@@ -22,6 +22,7 @@ from bridges.processing_bridge import ProcessingBridge
 from bridges.scraper_bridge import ScraperBridge
 from shared.governance import AgentGovernance
 from shared.utils import AgentState
+from shared.verticals import VerticalRegistry
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -120,6 +121,17 @@ scraper_bridge = ScraperBridge()
 processing_bridge = ProcessingBridge()
 config_bridge = ConfigBridge()
 governance = AgentGovernance()
+
+
+def _verticals_redis():
+    try:
+        return redis.from_url(os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
+    except Exception as exc:
+        logger.warning("verticals redis unavailable: %s", exc)
+        return None
+
+
+vertical_registry = VerticalRegistry(redis_client=_verticals_redis())
 
 
 class OrchestrationRequest(BaseModel):
@@ -275,6 +287,57 @@ def governance_evaluate(req: GovernanceEvalRequest):
 @app.post("/governance/promote/{agent_name}")
 def governance_promote(agent_name: str):
     return governance.promote(agent_name)
+
+
+class VerticalRegisterRequest(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    priority: int = 99
+    seed_sources: list[dict] = []
+    target_apps: list[str] = []
+    reference_pipelines: list[dict] = []
+
+
+@app.get("/verticals")
+def list_verticals():
+    """List all registered verticals (core + plug-in files + runtime)."""
+    verticals = vertical_registry.list_all()
+    ordered = sorted(verticals.values(), key=lambda v: v.get("priority", 99))
+    return {
+        "count": len(ordered),
+        "sources": sorted({v.get("source", "core") for v in ordered}),
+        "verticals": ordered,
+    }
+
+
+@app.get("/verticals/{vertical_id}")
+def get_vertical(vertical_id: str):
+    spec = vertical_registry.get(vertical_id)
+    if not spec:
+        raise HTTPException(404, f"Unknown vertical: {vertical_id}")
+    return spec
+
+
+@app.post("/verticals")
+def register_vertical(req: VerticalRegisterRequest):
+    """Register a new vertical plug-in at runtime (persisted to Redis)."""
+    try:
+        spec = vertical_registry.register(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc))
+    return {"status": "registered", "vertical": spec}
+
+
+@app.delete("/verticals/{vertical_id}")
+def delete_vertical(vertical_id: str):
+    """Remove a runtime-registered vertical (core/plug-in verticals are immutable)."""
+    removed = vertical_registry.unregister(vertical_id)
+    if not removed:
+        raise HTTPException(404, f"No runtime vertical to remove: {vertical_id}")
+    return {"status": "removed", "id": vertical_id}
 
 
 @app.get("/agents/{agent_name}/status")

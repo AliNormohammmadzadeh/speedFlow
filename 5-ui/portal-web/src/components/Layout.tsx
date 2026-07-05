@@ -6,11 +6,14 @@ import {
   ChevronRight,
   Cloud,
   Cpu,
+  CreditCard,
   Layers,
   LayoutDashboard,
+  LineChart,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  Shapes,
   Users,
   X,
   Zap,
@@ -26,7 +29,10 @@ const NAV = [
   { to: '/stream', icon: Cpu, label: 'Stream Compute', desc: 'Kafka & Flink' },
   { to: '/ai', icon: Bot, label: 'AI Intelligence', desc: 'Agents & bridges' },
   { to: '/apps', icon: Layers, label: 'Applications', desc: 'Serving APIs' },
+  { to: '/trading', icon: LineChart, label: 'Trading', desc: 'Backtest & risk' },
+  { to: '/verticals', icon: Shapes, label: 'Verticals', desc: 'Industry plug-ins' },
   { to: '/tenants', icon: Users, label: 'Tenants', desc: 'Plans & scrape' },
+  { to: '/billing', icon: CreditCard, label: 'Billing', desc: 'Usage & rate limits' },
 ]
 
 const PAGE_TITLES: Record<string, string> = {
@@ -35,7 +41,10 @@ const PAGE_TITLES: Record<string, string> = {
   '/stream': 'Stream Compute',
   '/ai': 'AI Intelligence',
   '/apps': 'Applications',
+  '/trading': 'Trading',
+  '/verticals': 'Verticals',
   '/tenants': 'Tenants',
+  '/billing': 'Billing',
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {

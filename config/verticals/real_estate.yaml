@@ -1,0 +1,18 @@
+# Vertical plug-in: Real Estate (task 5.2)
+# Drop-in extension loaded by VerticalRegistry from config/verticals/*.yaml.
+
+id: real_estate
+name: "Real Estate"
+priority: 5
+description: "Listing prices, days-on-market, rental yields, neighborhood trends"
+reference_pipelines:
+  - raw_topic: raw_stream
+    processed_topic: processed_stream
+    flink_job: price_normalizer
+    ml_model: demand_forecast
+seed_sources:
+  - name: zillow_listings_crawler
+    type: crawlee
+    url: "https://www.zillow.com/homes/for_sale"
+    value_score: 0.76
+target_apps: [accommodation_aggregator, meta_dashboard]
