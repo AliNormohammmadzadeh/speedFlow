@@ -21,6 +21,7 @@ The platform targets three business verticals out of the box: **Gaming & Esports
 | **Kafka Connect sinks** | Postgres JDBC sink registered via `make connectors`; writes `processed_stream` → `processed_events` |
 | **Search indexing** | Stream processor indexes `processed_events` into OpenSearch; Dashboard reports `events_indexed` |
 | **Phase 2 — Full stack parity** | Done (see [Next Phases](#next-phases--mandatory-todo-list)) |
+| **Phase 5 — Product expansion** | Done: self-serve billing, vertical plug-ins, trading backtesting, dataset revenue-share, PWA + rate-limit dashboard |
 | **Flink / Airflow in prod path** | Scaffolded; not wired end-to-end (Phase 3) |
 
 **Recommended dev path:** `make install-local-deps` → `make start-local` → `make pipeline-test` → open http://localhost:8030
@@ -128,7 +129,10 @@ make pipeline-test
 # 5. Check process status
 make status
 
-# 6. Open control portal
+# 6. (Phase 5) Run the serving apps that back the Trading & Marketplace UI
+make start-serving   # trading bot :8011 + marketplace :8014 on host
+
+# 7. Open control portal
 make portal   # → http://localhost:8030
 ```
 
@@ -221,6 +225,7 @@ docker compose logs -f platform-api ai-orchestrator crawlee-worker
 | `make start-local` | Infra in Docker + apps + pipeline on host |
 | `make start-apps` | Platform API, orchestrator, portal only |
 | `make start-pipeline` | Crawlee worker + stream processor only |
+| `make start-serving` | Trading bot (:8011) + marketplace (:8014) on host — backs Phase 5 Trading/Marketplace UI |
 | `make stop-local` | Stop all host processes |
 | `make status` | List host PIDs + Docker infra health |
 | `make pipeline-test` | E2E: tenant → scrape → Kafka processed_stream |
@@ -374,8 +379,11 @@ Set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env` for LLM-enhanced decisions
 | Ingestion | Scraper cards, Crawlee job table (click row → job details + logs) |
 | Stream Compute | Kafka topics, Connect sinks, Avro schemas, stream processor status |
 | AI Intelligence | Agent cards, orchestration runner, bridge details |
-| Applications | Trading signals, marketplace, dashboard KPIs (click for detail) |
+| Applications | Trading signals, marketplace, dashboard KPIs, publish/sell datasets (click for detail) |
+| Trading | Momentum backtesting (equity curve + metrics), risk-management config, mock broker positions/orders |
+| Verticals | Vertical plug-in registry (core / plug-in / runtime) + register new industries |
 | Tenants | Create tenants, submit scrapes, subscription plans |
+| Billing | Self-serve invoice, 30-day usage analytics, plan upgrades, platform-wide API rate-limit dashboard |
 
 **UI features:**
 
@@ -771,13 +779,52 @@ Goal: Secure multi-tenant SaaS deployable on AWS/K8s with billing and compliance
 - [x] **4.9** Secrets management — pluggable provider (`env`/Vault/AWS Secrets Manager) via `shared/secrets_provider.py` with env fallback; verified end-to-end against a dev **Vault** (`make secrets-demo`, secrets resolved from Vault not env)
 - [x] **4.10** Multi-region/DR — MirrorMaker 2 (`infra/dr/mm2.properties`) + tenant data residency (region validation, `/residency`). Verified real cross-cluster replication with a second Kafka cluster via `make dr-demo` (`raw_stream`/`processed_stream` replicated primary→DR)
 
-### Phase 5 — Product expansion (after Phase 4)
+### Phase 5 — Product expansion **DONE**
 
-- [ ] **5.1** Self-serve tenant portal — billing, usage analytics, plan upgrades in UI
-- [ ] **5.2** Vertical plug-in framework — new industries beyond gaming, finance, accommodation
-- [ ] **5.3** Trading bot — backtesting UI, risk management, optional broker integration
-- [ ] **5.4** Marketplace data products — tenant-published datasets with revenue share
-- [ ] **5.5** Mobile-responsive portal PWA + API rate-limit dashboard
+Goal: Turn the platform into a self-serve SaaS product with an extensible vertical
+framework, richer trading tooling, a two-sided data marketplace, and an installable PWA.
+
+- [x] **5.1** Self-serve tenant portal — Platform API `POST /tenants/plan` (upgrade/downgrade,
+  re-provisions dedicated topics), `GET /usage/analytics` (daily metered timeseries + category
+  breakdown), and `GET /billing/invoice`; surfaced in the portal **Billing** page (invoice,
+  usage chart, plan selector, quota bar).
+- [x] **5.2** Vertical plug-in framework — `shared/verticals.py` `VerticalRegistry` merges **core**
+  (`config/business/verticals.yaml`), **plug-in files** (`config/verticals/*.yaml`, ships
+  `retail_ecommerce` + `real_estate`), and **runtime** verticals (Redis-backed). Orchestrator
+  `GET/POST/DELETE /verticals`; portal **Verticals** page lists + registers plug-ins.
+- [x] **5.3** Trading bot — `strategy.py` momentum **backtesting** engine (equity curve, Sharpe,
+  max drawdown, win rate), **risk management** (`GET/POST /risk`: position sizing, stop-loss,
+  take-profit, daily-loss circuit breaker enforced live + in backtests), and an optional
+  **mock broker** (`/broker/order`, `/broker/positions`). Portal **Trading** page.
+- [x] **5.4** Marketplace data products — tenant-published datasets (`POST /datasets`,
+  `GET /datasets`), `POST /datasets/{id}/purchase` with **revenue share** (publisher/platform
+  split + API-key delivery, persisted to `marketplace_datasets` + `dataset_sales`), and
+  `GET /datasets/{id}/revenue`. Portal **Applications** page publish/buy widget.
+- [x] **5.5** Mobile-responsive portal **PWA** (`manifest.webmanifest`, service worker with
+  app-shell caching, installable icon, viewport-fit) + **API rate-limit dashboard**
+  (Platform API `GET /ratelimits[/me]`, portal-wide view on the **Billing** page).
+
+### Phase 6 — Scale, reliability & intelligence **REQUIRED (next steps)**
+
+Goal: harden the Phase 5 product for real customers — real market data, durable state,
+production auth, and observability across the new surfaces.
+
+- [ ] **6.1** Replace the trading bot's synthetic backtest series with **real historical data**
+  (from `processed_events` / OpenSearch) and add walk-forward + multi-strategy comparison.
+- [ ] **6.2** Real broker integration behind the `BROKER_PROVIDER` seam (paper-trading API,
+  order reconciliation, position persistence in Postgres instead of in-memory).
+- [ ] **6.3** Persist runtime verticals to Postgres (not just Redis) and let the Discovery/Scrape
+  Planner agents auto-seed sources from a newly registered vertical.
+- [ ] **6.4** Dataset marketplace payouts — connect revenue-share to Stripe Connect transfers,
+  add publisher earnings dashboard + downloadable sample previews.
+- [ ] **6.5** Self-serve billing hardening — Stripe subscriptions for plan changes, proration,
+  dunning, and invoice PDF export; gate plan upgrades behind payment.
+- [ ] **6.6** Enforce API rate limits with `429` + `Retry-After` headers per plan tier and expose
+  per-endpoint (not just per-day) counters in the rate-limit dashboard.
+- [ ] **6.7** PWA push notifications (Web Push) for job completion / quota alerts and full offline
+  read-only mode with background sync.
+- [ ] **6.8** End-to-end tests + Prometheus metrics for all Phase 5 endpoints; Grafana panels for
+  backtests run, datasets sold, revenue split, and rate-limit utilization.
 
 ---
 

@@ -36,7 +36,12 @@ re-run dependency installs unless something is missing.
 - **Shifted host ports:** Postgres `5433`, Redis `6380`, Kafka `29092` (Docker-internal ports differ:
   5432/6379/9092). `psql` and `redis-cli` are installed for the host scripts.
 - **Expected "down/degraded" services:** in Path A the serving apps (8010–8014), Flink, ML service,
-  Kafka Connect, and Airflow are not started, so the portal shows them down/degraded — this is normal.
+ Kafka Connect, and Airflow are not started, so the portal shows them down/degraded — this is normal.
+- **Phase 5 Trading & Marketplace UI need serving apps on host:** the portal **Trading** page and the
+ **Applications → Publish/Sell Datasets** widget call the trading bot (:8011) and marketplace (:8014).
+ In Path A run `make start-serving` to start them on the host (stopped by `make stop-local`). The
+ trading-bot Kafka consumer uses `localhost:29092`; if Kafka isn't reachable it logs and retries —
+ backtesting/risk/broker endpoints still work without live signals.
 - Host process logs are at `/tmp/speedflow-*.log`; PID files in `/tmp/speedflow-pids/`.
 
 ### Testing
