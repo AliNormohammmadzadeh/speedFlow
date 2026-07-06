@@ -746,4 +746,20 @@ async def pipeline_status():
 
 static_dir = os.environ.get("PORTAL_STATIC_DIR", "/app/static")
 if os.path.isdir(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
+    from fastapi.responses import FileResponse
+
+    # Hashed bundle assets are served directly.
+    app.mount("/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets")
+
+    # SPA fallback: real files at the web root (icon.svg, manifest.webmanifest,
+    # sw.js, ...) are served as-is; every other path returns index.html so
+    # client-side routes (e.g. /canvas) work on direct load and refresh.
+    # Declared last, so the /api/* routes above always take precedence.
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/"):
+            raise HTTPException(404, "API endpoint not found")
+        candidate = os.path.join(static_dir, full_path)
+        if full_path and os.path.isfile(candidate):
+            return FileResponse(candidate)
+        return FileResponse(os.path.join(static_dir, "index.html"))
