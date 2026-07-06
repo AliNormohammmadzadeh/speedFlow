@@ -101,6 +101,41 @@ body {
   }
 }
 
+/* --- Pipeline Canvas (React Flow) --- */
+@keyframes sf-edge-flow {
+  to { stroke-dashoffset: -160; }
+}
+.sf-edge-flow {
+  stroke-dashoffset: 0;
+  animation-name: sf-edge-flow;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+.sf-flow .react-flow__controls {
+  @apply overflow-hidden rounded-xl border border-white/10 bg-slate-900/85 shadow-xl backdrop-blur;
+}
+.sf-flow .react-flow__controls-button {
+  @apply border-b border-white/10 bg-transparent text-slate-300;
+}
+.sf-flow .react-flow__controls-button:hover {
+  @apply bg-white/10 text-white;
+}
+.sf-flow .react-flow__controls-button svg {
+  fill: currentColor;
+}
+.sf-flow .react-flow__minimap {
+  @apply overflow-hidden rounded-xl border border-white/10;
+  background-color: rgba(15, 23, 42, 0.85) !important;
+}
+.sf-flow .react-flow__handle {
+  border: none;
+}
+.sf-flow .react-flow__node:focus,
+.sf-flow .react-flow__node:focus-visible {
+  outline: none;
+}
+
 @keyframes slide-in-right {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }

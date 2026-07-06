@@ -15,6 +15,7 @@ import {
   PanelLeftOpen,
   Shapes,
   Users,
+  Workflow,
   X,
   Zap,
 } from 'lucide-react'
@@ -25,6 +26,7 @@ import { usePoll } from './ui'
 
 const NAV = [
   { to: '/', icon: LayoutDashboard, label: 'Overview', desc: 'Health & pipeline' },
+  { to: '/canvas', icon: Workflow, label: 'Pipeline Canvas', desc: 'Live flow topology' },
   { to: '/ingestion', icon: Cloud, label: 'Ingestion', desc: 'Scrapers & jobs' },
   { to: '/stream', icon: Cpu, label: 'Stream Compute', desc: 'Kafka & Flink' },
   { to: '/ai', icon: Bot, label: 'AI Intelligence', desc: 'Agents & bridges' },
@@ -37,6 +39,7 @@ const NAV = [
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Overview',
+  '/canvas': 'Pipeline Canvas',
   '/ingestion': 'Ingestion',
   '/stream': 'Stream Compute',
   '/ai': 'AI Intelligence',
