@@ -20,8 +20,14 @@ ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 ENV PYTHONPATH=/app
 
 COPY 1-ingestion-edge/scrapers/requirements.txt /tmp/requirements.txt
+# The Playwright browser binary is downloaded from cdn.playwright.dev, which is
+# geo-restricted in some regions (HTTP 403 "not available in your location").
+# That download must not fail the image build: Selenium uses the apt "chromium"
+# package installed above, and the REST/WebSocket scrapers need no browser. Keep
+# the install attempt but make it non-fatal.
 RUN pip install --no-cache-dir -r /tmp/requirements.txt && \
-    playwright install chromium
+    (playwright install chromium \
+     || echo "WARNING: Playwright Chromium download unavailable (network/geo-restricted CDN); Selenium uses the apt 'chromium' package instead.")
 
 COPY 1-ingestion-edge/scrapers/rest ./rest
 COPY 1-ingestion-edge/scrapers/websocket ./websocket

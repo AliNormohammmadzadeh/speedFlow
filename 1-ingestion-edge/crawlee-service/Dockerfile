@@ -8,7 +8,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY 1-ingestion-edge/crawlee-service/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && playwright install chromium
+# The Playwright Python package is required, but the browser binary is downloaded
+# from cdn.playwright.dev, which is geo-restricted in some regions (HTTP 403
+# "not available in your location"). That download must not fail the image build:
+# the default crawl path uses BeautifulSoupCrawler (no browser) and there is an
+# HTTP fallback crawler, so Chromium is optional. Keep the install attempt but
+# make it non-fatal.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && (playwright install chromium \
+        || echo "WARNING: Playwright Chromium download unavailable (network/geo-restricted CDN); crawlee will use the BeautifulSoup/HTTP fallback crawler.")
 
 COPY 1-ingestion-edge/crawlee-service/crawler.py 1-ingestion-edge/crawlee-service/worker.py ./
 COPY 1-ingestion-edge/crawlee-service/config/ ./config/
