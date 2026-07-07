@@ -1,14 +1,17 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate start-serving
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq pre-docker-up portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate start-serving
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
-up: pre-pull build-seq
+up: pre-pull build-seq pre-docker-up
 	docker compose up -d
 	@echo "Stack starting. Run 'make health' in ~60s, then 'make connectors'."
 
 # Fast path for warm caches (parallel build).
-up-fast:
+up-fast: pre-docker-up
 	docker compose up -d --build
+
+pre-docker-up:
+	bash scripts/pre-docker-up.sh
 
 down:
 	docker compose down
