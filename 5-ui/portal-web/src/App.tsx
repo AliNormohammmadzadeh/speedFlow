@@ -5,6 +5,7 @@ import PipelineCanvas from './pages/PipelineCanvas'
 import Ingestion from './pages/Ingestion'
 import Stream from './pages/Stream'
 import AIAgents from './pages/AIAgents'
+import Brain from './pages/Brain'
 import Applications from './pages/Applications'
 import Tenants from './pages/Tenants'
 import Billing from './pages/Billing'
@@ -20,6 +21,7 @@ export default function App() {
         <Route path="/ingestion" element={<Ingestion />} />
         <Route path="/stream" element={<Stream />} />
         <Route path="/ai" element={<AIAgents />} />
+        <Route path="/brain" element={<Brain />} />
         <Route path="/apps" element={<Applications />} />
         <Route path="/trading" element={<Trading />} />
         <Route path="/verticals" element={<Verticals />} />

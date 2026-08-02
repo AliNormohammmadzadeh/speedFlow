@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   Activity,
   Bot,
+  BrainCircuit,
   ChevronRight,
   Cloud,
   Cpu,
@@ -30,6 +31,7 @@ const NAV = [
   { to: '/ingestion', icon: Cloud, label: 'Ingestion', desc: 'Scrapers & jobs' },
   { to: '/stream', icon: Cpu, label: 'Stream Compute', desc: 'Kafka & Flink' },
   { to: '/ai', icon: Bot, label: 'AI Intelligence', desc: 'Agents & bridges' },
+  { to: '/brain', icon: BrainCircuit, label: 'Brain', desc: 'Hierarchical planning' },
   { to: '/apps', icon: Layers, label: 'Applications', desc: 'Serving APIs' },
   { to: '/trading', icon: LineChart, label: 'Trading', desc: 'Backtest & risk' },
   { to: '/verticals', icon: Shapes, label: 'Verticals', desc: 'Industry plug-ins' },
@@ -43,6 +45,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/ingestion': 'Ingestion',
   '/stream': 'Stream Compute',
   '/ai': 'AI Intelligence',
+  '/brain': 'Brain',
   '/apps': 'Applications',
   '/trading': 'Trading',
   '/verticals': 'Verticals',
