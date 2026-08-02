@@ -112,11 +112,11 @@ export default function Brain() {
               <p className="mt-1 text-sm text-white/50">{current.goal}</p>
             </div>
             <div className="flex gap-3">
-              <button type="button" onClick={buildPlan} disabled={busy !== ''} className="btn-action-secondary">
+              <button type="button" onClick={buildPlan} disabled={busy !== ''} className="btn-action-secondary px-5">
                 <ListTree className="mr-2 inline h-4 w-4" />
                 {busy === 'plan' ? 'Planning…' : 'Build Plan'}
               </button>
-              <button type="button" onClick={execute} disabled={busy !== ''} className="btn-action-primary">
+              <button type="button" onClick={execute} disabled={busy !== ''} className="btn-action-primary px-5">
                 <Play className="mr-2 inline h-4 w-4" />
                 {busy === 'execute' ? 'Executing…' : 'Execute & Verify'}
               </button>
