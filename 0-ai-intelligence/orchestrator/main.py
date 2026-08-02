@@ -17,6 +17,8 @@ from agents.config_agent import ConfigAgent
 from agents.discovery_agent import DiscoveryAgent
 from agents.processing_agent import ProcessingAgent
 from agents.strategy_agent import StrategyAgent
+from brain import HierarchicalPlanner, PlanExecutor, build_orchestrator_handlers
+from brain.planner import PlannerError
 from bridges.config_bridge import ConfigBridge
 from bridges.processing_bridge import ProcessingBridge
 from bridges.scraper_bridge import ScraperBridge
@@ -132,6 +134,28 @@ def _verticals_redis():
 
 
 vertical_registry = VerticalRegistry(redis_client=_verticals_redis())
+
+# --- Brain: agentic hierarchical planner ---------------------------------- #
+# Service URLs the Brain's `check_service` step probes. Defaults are host-mode
+# friendly (Path A); Docker Compose overrides them with internal hostnames.
+BRAIN_SERVICES = {
+    "platform_api": os.environ.get("PLATFORM_API_URL", "http://localhost:8020"),
+    "orchestrator": os.environ.get("SELF_URL", "http://localhost:8000"),
+    "trading_bot": os.environ.get("TRADING_BOT_URL", "http://localhost:8011"),
+    "marketplace": os.environ.get("MARKETPLACE_URL", "http://localhost:8014"),
+}
+
+brain_planner = HierarchicalPlanner()
+brain_handlers = build_orchestrator_handlers(
+    scrape_planner=scrape_planner,
+    strategy_agent=strategy_agent,
+    discovery_agent=discovery_agent,
+    processing_agent=processing_agent,
+    config_agent=config_agent,
+    services=BRAIN_SERVICES,
+    vertical_registry=vertical_registry,
+)
+brain_executor = PlanExecutor(handlers=brain_handlers)
 
 
 class OrchestrationRequest(BaseModel):
@@ -338,6 +362,47 @@ def delete_vertical(vertical_id: str):
     if not removed:
         raise HTTPException(404, f"No runtime vertical to remove: {vertical_id}")
     return {"status": "removed", "id": vertical_id}
+
+
+# --- Brain: hierarchical planning endpoints ------------------------------- #
+class BrainPlanRequest(BaseModel):
+    objective: str
+    context: dict[str, Any] = {}
+    use_llm: bool = False
+
+
+class BrainExecuteRequest(BaseModel):
+    objective: str
+    context: dict[str, Any] = {}
+    use_llm: bool = False
+    stop_on_failure: bool = False
+
+
+@app.get("/brain/objectives")
+def brain_objectives():
+    """List the hierarchical objective templates the Brain can plan/execute."""
+    return {"objectives": brain_planner.list_objectives()}
+
+
+@app.post("/brain/plan")
+async def brain_plan(req: BrainPlanRequest):
+    """Decompose an objective into a hierarchical plan with resolved variables."""
+    try:
+        plan = await brain_planner.build_plan(req.objective, req.context, use_llm=req.use_llm)
+    except PlannerError as exc:
+        raise HTTPException(404, str(exc))
+    return plan.to_dict()
+
+
+@app.post("/brain/execute")
+async def brain_execute(req: BrainExecuteRequest):
+    """Plan an objective, then run it step-by-step, verifying after each step."""
+    try:
+        plan = await brain_planner.build_plan(req.objective, req.context, use_llm=req.use_llm)
+    except PlannerError as exc:
+        raise HTTPException(404, str(exc))
+    report = await brain_executor.execute(plan, stop_on_failure=req.stop_on_failure)
+    return {"plan": plan.to_dict(), "report": report.to_dict()}
 
 
 @app.get("/agents/{agent_name}/status")

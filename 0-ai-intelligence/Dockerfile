@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY shared/ ./shared/
 COPY agents/ ./agents/
+COPY brain/ ./brain/
 COPY bridges/ ./bridges/
 COPY orchestrator/ ./orchestrator/
 
