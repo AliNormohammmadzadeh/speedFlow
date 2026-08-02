@@ -45,8 +45,19 @@ re-run dependency installs unless something is missing.
 - Host process logs are at `/tmp/speedflow-*.log`; PID files in `/tmp/speedflow-pids/`.
 
 ### Testing
-- There are **no unit tests or linters** configured. The only automated check is the end-to-end
-  `make pipeline-test` (starter tenant → scrape → `raw_stream` → `processed_stream`). Note it targets
-  `https://httpbin.org/html`, which is sometimes rate-limited (503); if so the pipeline is still
-  healthy — re-run, or submit a scrape against a reliable URL (e.g. `https://example.com`) via the
-  Platform API and confirm an event appears on `processed_stream`.
+- No linters are configured. Automated checks:
+  - `make pipeline-test` — end-to-end scrape pipeline (starter tenant → scrape → `raw_stream` →
+    `processed_stream`). It targets `https://httpbin.org/html`, which is sometimes rate-limited
+    (503); if so the pipeline is still healthy — re-run, or submit a scrape against a reliable URL
+    (e.g. `https://example.com`) via the Platform API and confirm an event on `processed_stream`.
+  - `make brain-test` — Brain (hierarchical planner) unit suite **plus** live execution of every
+    objective against the running orchestrator (asserts each step is verified). The unit portion
+    also runs standalone with `python3 tests/test_brain.py` (no pytest needed, no services needed).
+
+### The Brain (agentic hierarchical planner)
+- Lives in `0-ai-intelligence/brain/`; objective templates in `config/brain/objectives.yaml`.
+  Orchestrator exposes `GET /brain/objectives`, `POST /brain/plan`, `POST /brain/execute`; portal
+  page at `/brain`. The Brain's `check_service` step defaults to **host-mode URLs** (localhost),
+  and `docker-compose.yml` overrides them with internal hostnames for Path B — so in Path A the
+  `revenue_optimization_cycle`/`onboard_vertical` health checks only assume `platform-api` +
+  orchestrator are up (both are, under `make start-local`).
