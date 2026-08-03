@@ -34,6 +34,11 @@ export const api = {
   rateLimits: () => fetchJson<any>('/ratelimits'),
   rateLimitMe: (apiKey: string) => fetchJson<any>(`/ratelimits/me?api_key=${encodeURIComponent(apiKey)}`),
 
+  // Brain — agentic hierarchical planning
+  brainObjectives: () => fetchJson<any>('/brain/objectives'),
+  brainPlan: (body: object) => fetchJson<any>('/brain/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+  brainExecute: (body: object) => fetchJson<any>('/brain/execute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+
   // Phase 5.2 — vertical plug-in framework
   verticals: () => fetchJson<any>('/verticals'),
   registerVertical: (body: object) => fetchJson<any>('/verticals', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),

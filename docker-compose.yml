@@ -347,6 +347,11 @@ services:
       - kafka
     environment:
       <<: *common-env
+      # Brain check_service targets (internal Docker hostnames).
+      PLATFORM_API_URL: http://platform-api:8020
+      SELF_URL: http://ai-orchestrator:8000
+      TRADING_BOT_URL: http://app-trading-bot:8011
+      MARKETPLACE_URL: http://app-marketplace:8014
     volumes:
       - ./config:/app/config
       - ./infra:/app/infra

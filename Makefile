@@ -1,4 +1,4 @@
-.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq pre-docker-up portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate start-serving
+.PHONY: up up-fast down logs orchestrate connectors schemas init build pre-pull build-seq pre-docker-up portal path-b observability up-airflow flink-job secrets-demo dr-demo tf-plan k8s-validate start-serving brain-test
 
 # Stable single-command bring-up: pre-pull base images, build sequentially
 # (avoids PyPI/Docker Hub parallel timeouts), then start the full stack.
@@ -66,6 +66,10 @@ status:
 
 pipeline-test:
 	bash scripts/pipeline-test.sh
+
+# Brain (hierarchical planner): unit tests + live objective execution/verification
+brain-test:
+	bash scripts/brain-e2e.sh
 
 path-b:
 	bash scripts/path-b-e2e.sh

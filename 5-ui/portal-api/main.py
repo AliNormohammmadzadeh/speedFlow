@@ -460,6 +460,61 @@ async def register_vertical(req: VerticalRegister):
         raise HTTPException(502, f"Orchestrator unavailable: {exc}") from exc
 
 
+# --- Brain: hierarchical planning proxy ---
+class BrainRun(BaseModel):
+    objective: str
+    context: dict = {}
+    use_llm: bool = False
+    stop_on_failure: bool = False
+
+
+@app.get("/api/brain/objectives")
+async def brain_objectives():
+    try:
+        return await _proxy_get("orchestrator", "/brain/objectives")
+    except HTTPException:
+        return {"objectives": []}
+
+
+@app.post("/api/brain/plan")
+async def brain_plan(req: BrainRun):
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{SERVICES['orchestrator']}/brain/plan",
+                json={"objective": req.objective, "context": req.context, "use_llm": req.use_llm},
+            )
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Orchestrator unavailable: {exc}") from exc
+
+
+@app.post("/api/brain/execute")
+async def brain_execute(req: BrainRun):
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            r = await client.post(
+                f"{SERVICES['orchestrator']}/brain/execute",
+                json={
+                    "objective": req.objective,
+                    "context": req.context,
+                    "use_llm": req.use_llm,
+                    "stop_on_failure": req.stop_on_failure,
+                },
+            )
+            if r.status_code >= 400:
+                raise HTTPException(r.status_code, r.text)
+            return r.json()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502, f"Orchestrator unavailable: {exc}") from exc
+
+
 # --- Phase 5.3: trading bot risk, backtesting, broker ---
 @app.get("/api/trading/risk")
 async def trading_risk():

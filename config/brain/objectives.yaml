@@ -1,0 +1,212 @@
+# SpeedFlow Brain — objective templates for the hierarchical planner.
+#
+# Each objective decomposes into phases -> tasks -> steps. The planner resolves
+# the `variables` block (clamping to the tenant plan's limits and applying caller
+# overrides), then substitutes `${var}` references into every step's `config`
+# and `verify` block. The executor runs steps in order and, after each step,
+# the verifier examines the output against that step's `verify` checks.
+#
+# Step `action` values map to handlers in brain/handlers.py:
+#   resolve | plan_scrape | run_strategy | run_discovery | run_processing
+#   run_config | check_service | register_vertical
+
+version: "1.0"
+
+objectives:
+  # ---------------------------------------------------------------------- #
+  revenue_optimization_cycle:
+    goal: >-
+      Run the full cognitive loop (strategy -> discovery -> processing -> config)
+      and confirm the control plane is healthy.
+    variables:
+      plan: enterprise
+      required_outcomes: [market_signal, momentum_prediction]
+      desired_state:
+        kafka_partitions: 6
+        flink_parallelism: 4
+        scraper_replicas: 3
+    phases:
+      - name: Assess
+        description: Translate business goals into prioritized data gaps.
+        tasks:
+          - name: Analyze KPIs & feedback
+            steps:
+              - name: Run Strategy Agent
+                action: run_strategy
+                description: Compute composite score and identify data gaps.
+                verify:
+                  - kind: config_present
+                    target: composite_score
+                  - kind: type_is
+                    target: data_gaps
+                    value: list
+      - name: Discover
+        description: Value candidate sources and pick scraping targets.
+        tasks:
+          - name: Score data sources
+            steps:
+              - name: Run Discovery Agent
+                action: run_discovery
+                verify:
+                  - kind: nonempty
+                    target: discovered_sources
+                  - kind: type_is
+                    target: scraping_targets
+                    value: list
+      - name: Process
+        description: Select the processing strategy for each outcome.
+        tasks:
+          - name: Route processing
+            steps:
+              - name: Run Processing Agent
+                action: run_processing
+                config:
+                  required_outcomes: ${required_outcomes}
+                verify:
+                  - kind: nonempty
+                    target: processing_decisions
+      - name: Configure
+        description: Generate infra config (Terraform + K8s + GitOps).
+        tasks:
+          - name: Generate platform config
+            steps:
+              - name: Run Config Agent
+                action: run_config
+                config:
+                  desired_state: ${desired_state}
+                verify:
+                  - kind: config_present
+                    target: gitops_path
+                  - kind: config_present
+                    target: terraform
+      - name: Verify readiness
+        description: Confirm the control-plane services are reachable.
+        tasks:
+          - name: Health-check control plane
+            steps:
+              - name: Check Platform API
+                action: check_service
+                config:
+                  service: platform_api
+                verify:
+                  - kind: status_up
+                    target: status
+              - name: Check Orchestrator
+                action: check_service
+                config:
+                  service: orchestrator
+                verify:
+                  - kind: status_up
+                    target: status
+
+  # ---------------------------------------------------------------------- #
+  launch_scrape_pipeline:
+    goal: >-
+      Turn a natural-language requirement into a plan-limited crawl config and
+      confirm the ingestion entrypoint is live.
+    variables:
+      plan: starter
+      seed_url: "https://example.com"
+      max_pages: 25          # clamped to the starter plan's 20 pages/job
+      vertical: general
+    phases:
+      - name: Plan
+        description: Resolve variables and derive the crawl configuration.
+        tasks:
+          - name: Resolve crawl variables
+            steps:
+              - name: Resolve plan-limited variables
+                action: resolve
+                config:
+                  plan: ${plan}
+                  max_pages: ${max_pages}
+                  vertical: ${vertical}
+                verify:
+                  - kind: config_present
+                    target: resolved
+                  - kind: range
+                    target: resolved.max_pages
+                    min: 1
+                    max: 20
+          - name: Derive crawl plan
+            steps:
+              - name: Plan scrape from requirement
+                action: plan_scrape
+                config:
+                  requirement: "Scrape page titles from ${seed_url}"
+                  hints:
+                    max_pages: ${max_pages}
+                    vertical: ${vertical}
+                verify:
+                  - kind: nonempty
+                    target: urls
+                  - kind: range
+                    target: max_pages
+                    min: 1
+                    max: 500
+      - name: Preflight
+        description: Confirm the ingestion entrypoint accepts jobs.
+        tasks:
+          - name: Health-check ingestion
+            steps:
+              - name: Check Platform API
+                action: check_service
+                config:
+                  service: platform_api
+                verify:
+                  - kind: status_up
+                    target: status
+
+  # ---------------------------------------------------------------------- #
+  onboard_vertical:
+    goal: >-
+      Register a new industry vertical at runtime and confirm the discovery
+      agent can value sources for it.
+    variables:
+      vertical_id: retail_flash
+      vertical_name: "Retail Flash Sales"
+    phases:
+      - name: Register
+        description: Persist the vertical plug-in (Redis-backed).
+        tasks:
+          - name: Register vertical plug-in
+            steps:
+              - name: Register runtime vertical
+                action: register_vertical
+                config:
+                  vertical:
+                    id: ${vertical_id}
+                    name: ${vertical_name}
+                    description: "Runtime vertical onboarded by the Brain"
+                    priority: 20
+                    seed_sources:
+                      - name: retail_flash_deals
+                        type: rest
+                        url: "https://example.com/api/deals"
+                        value_score: 0.7
+                    target_apps: [aggregator, marketplace]
+                verify:
+                  - kind: status_up
+                    target: status
+      - name: Discover
+        description: Confirm discovery can value sources across verticals.
+        tasks:
+          - name: Value sources
+            steps:
+              - name: Run Discovery Agent
+                action: run_discovery
+                verify:
+                  - kind: nonempty
+                    target: discovered_sources
+      - name: Verify
+        description: Confirm the orchestrator is serving.
+        tasks:
+          - name: Health-check orchestrator
+            steps:
+              - name: Check Orchestrator
+                action: check_service
+                config:
+                  service: orchestrator
+                verify:
+                  - kind: status_up
+                    target: status
