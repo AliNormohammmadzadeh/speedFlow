@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: #08080f;
   background-image:
@@ -149,4 +153,133 @@ body {
 }
 .animate-fade-in {
   animation: fade-in 0.2s ease-out;
+}
+
+/* ============================================================
+   Landing page — 3D / aurora / scroll-reveal effects
+   ============================================================ */
+
+/* Scroll-reveal: elements start hidden + shifted, then settle in. */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px) scale(0.98);
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 0.84, 0.44, 1),
+    transform 0.8s cubic-bezier(0.16, 0.84, 0.44, 1);
+  will-change: opacity, transform;
+}
+.reveal.reveal-left { transform: translateX(-48px); }
+.reveal.reveal-right { transform: translateX(48px); }
+.reveal.reveal-scale { transform: scale(0.9); }
+.reveal.reveal-visible { opacity: 1; transform: none; }
+
+/* Animated aurora blobs */
+@keyframes aurora-1 { 0%, 100% { transform: translate3d(0, 0, 0) scale(1); } 50% { transform: translate3d(8%, 10%, 0) scale(1.2); } }
+@keyframes aurora-2 { 0%, 100% { transform: translate3d(0, 0, 0) scale(1.1); } 50% { transform: translate3d(-10%, -8%, 0) scale(0.95); } }
+@keyframes aurora-3 { 0%, 100% { transform: translate3d(0, 0, 0) scale(1); } 50% { transform: translate3d(6%, -10%, 0) scale(1.25); } }
+.aurora { position: absolute; border-radius: 9999px; filter: blur(120px); will-change: transform; }
+.aurora-1 { animation: aurora-1 18s ease-in-out infinite; }
+.aurora-2 { animation: aurora-2 22s ease-in-out infinite; }
+.aurora-3 { animation: aurora-3 20s ease-in-out infinite; }
+
+/* Perspective grid floor */
+@keyframes grid-move { from { background-position: 0 0; } to { background-position: 0 64px; } }
+.grid-floor {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 64px 64px;
+  -webkit-mask-image: radial-gradient(ellipse 90% 55% at 50% -5%, #000 25%, transparent 72%);
+  mask-image: radial-gradient(ellipse 90% 55% at 50% -5%, #000 25%, transparent 72%);
+  animation: grid-move 9s linear infinite;
+}
+
+/* Rising particles */
+@keyframes floaty {
+  0% { transform: translateY(20px); opacity: 0; }
+  12% { opacity: 0.8; }
+  88% { opacity: 0.8; }
+  100% { transform: translateY(-140px); opacity: 0; }
+}
+.particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  background: rgba(34, 211, 238, 0.8);
+  box-shadow: 0 0 10px rgba(34, 211, 238, 0.9);
+  animation: floaty linear infinite;
+  will-change: transform, opacity;
+}
+
+/* Shimmering gradient headline */
+@keyframes shimmer { to { background-position: 200% center; } }
+.text-shimmer {
+  background: linear-gradient(90deg, #22d3ee, #a78bfa, #f472b6, #22d3ee);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+
+/* Mouse-follow spotlight overlay */
+.spotlight-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(560px circle at var(--mx, 50%) var(--my, 20%), rgba(34, 211, 238, 0.08), transparent 45%);
+  transition: background 0.15s ease-out;
+}
+
+/* 3D pointer tilt */
+.tilt {
+  transform-style: preserve-3d;
+  transition: transform 0.25s cubic-bezier(0.16, 0.84, 0.44, 1);
+  will-change: transform;
+}
+.tilt-layer { transform-style: preserve-3d; }
+
+/* Holographic gradient border */
+.holo { position: relative; }
+.holo::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(34, 211, 238, 0.7), rgba(167, 139, 250, 0.3) 45%, rgba(244, 114, 182, 0.6));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Floating chips gentle bob */
+@keyframes chip-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+.chip-float { animation: chip-float 5s ease-in-out infinite; }
+
+/* Card 3D hover lift */
+.card-3d {
+  transition: transform 0.3s cubic-bezier(0.16, 0.84, 0.44, 1), box-shadow 0.3s, border-color 0.3s;
+  transform-style: preserve-3d;
+}
+
+/* Slow spin for gauge ring */
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.spin-slow { animation: spin-slow 14s linear infinite; }
+
+/* Animated pipeline connector pulse */
+@keyframes flow-pulse { 0% { opacity: 0.2; transform: translateX(-4px); } 50% { opacity: 1; } 100% { opacity: 0.2; transform: translateX(4px); } }
+.flow-pulse { animation: flow-pulse 1.8s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .aurora, .grid-floor, .particle, .text-shimmer, .chip-float, .spin-slow, .flow-pulse {
+    animation: none !important;
+  }
 }
