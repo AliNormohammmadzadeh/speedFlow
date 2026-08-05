@@ -171,7 +171,6 @@ body {
   transition:
     opacity 0.8s cubic-bezier(0.16, 0.84, 0.44, 1),
     transform 0.8s cubic-bezier(0.16, 0.84, 0.44, 1);
-  will-change: opacity, transform;
 }
 .reveal.reveal-left { transform: translateX(-48px); }
 .reveal.reveal-right { transform: translateX(48px); }
@@ -244,7 +243,6 @@ body {
 .tilt {
   transform-style: preserve-3d;
   transition: transform 0.25s cubic-bezier(0.16, 0.84, 0.44, 1);
-  will-change: transform;
 }
 .tilt-layer { transform-style: preserve-3d; }
 
