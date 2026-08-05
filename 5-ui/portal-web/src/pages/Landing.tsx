@@ -171,7 +171,7 @@ const PARTICLES = Array.from({ length: 22 }, (_, i) => ({
   left: `${(i * 37) % 100}%`,
   delay: `${(i % 11) * 0.9}s`,
   duration: `${7 + (i % 6) * 1.6}s`,
-  bottom: `${(i * 17) % 40}%`,
+  top: `${(i * 41) % 96}%`,
 }))
 
 /* ---------- page ---------- */
@@ -225,14 +225,16 @@ export default function Landing() {
         <div className="h-full bg-gradient-to-r from-accent-cyan via-accent-violet to-accent-pink transition-[width] duration-150" style={{ width: `${progress}%` }} />
       </div>
 
-      {/* fantastic animated background */}
-      <div className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="aurora aurora-1 -left-40 top-[-12%] h-[38rem] w-[38rem] bg-accent-cyan/25" />
-        <div className="aurora aurora-2 right-[-12%] top-[14%] h-[34rem] w-[34rem] bg-accent-violet/25" />
-        <div className="aurora aurora-3 bottom-[-14%] left-1/3 h-[32rem] w-[32rem] bg-accent-pink/20" />
+      {/* fantastic animated background — absolutely anchored to the page (not
+          fixed) so it never fights scroll compositing, with glow spread down */}
+      <div className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+        <div className="aurora aurora-1 -left-40 top-[-4%] h-[38rem] w-[38rem] bg-accent-cyan/25" />
+        <div className="aurora aurora-2 right-[-12%] top-[26%] h-[34rem] w-[34rem] bg-accent-violet/25" />
+        <div className="aurora aurora-3 left-1/4 top-[52%] h-[32rem] w-[32rem] bg-accent-pink/20" />
+        <div className="aurora aurora-1 right-[-8%] top-[76%] h-[30rem] w-[30rem] bg-accent-cyan/20" />
         <div className="grid-floor opacity-40" />
         {PARTICLES.map((p, i) => (
-          <span key={i} className="particle" style={{ left: p.left, bottom: p.bottom, animationDelay: p.delay, animationDuration: p.duration }} />
+          <span key={i} className="particle" style={{ left: p.left, top: p.top, animationDelay: p.delay, animationDuration: p.duration }} />
         ))}
       </div>
       <div className="spotlight-layer" />
