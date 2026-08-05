@@ -799,6 +799,199 @@ async def pipeline_status():
     }
 
 
+# --- MVP scorecard + live end-to-end proof ------------------------------------
+# These power the public landing page and the "MVP Showcase" console page. The
+# scorecard reports live readiness; the demo actually exercises the platform
+# end-to-end (tenant → AI scrape → Kafka pipeline → Brain verification) so the
+# UI can prove the MVP works rather than just claiming it.
+
+MVP_CAPABILITIES = [
+    {"key": "brain", "title": "Agentic Brain — hierarchical planning & per-step verification", "layer": "Intelligence"},
+    {"key": "ingestion", "title": "Adaptive ingestion — Crawlee workers + REST/WS/Selenium scrapers", "layer": "Ingestion"},
+    {"key": "streaming", "title": "Real-time stream compute — Kafka + Avro raw_stream → processed_stream", "layer": "Compute"},
+    {"key": "multitenant", "title": "Multi-tenant gateway — plans, API keys, quotas & billing", "layer": "Platform"},
+    {"key": "serving", "title": "Serving apps — trading bot, aggregator, marketplace, auditing", "layer": "Serving"},
+    {"key": "portal", "title": "Control portal — live health, pipeline canvas & this showcase", "layer": "UI"},
+]
+
+
+class DemoRequest(BaseModel):
+    url: str = "https://example.com"
+    objective: str = "launch_scrape_pipeline"
+
+
+@app.get("/api/mvp/status")
+async def mvp_status():
+    """Live MVP readiness scorecard: service health + real platform metrics."""
+    ov = await overview()
+    services = ov["services"]
+
+    tenants_count = 0
+    completed_jobs = 0
+    total_jobs = 0
+    try:
+        with engine.connect() as conn:
+            tenants_count = conn.execute(text("SELECT COUNT(*) FROM tenants")).scalar() or 0
+            for row in conn.execute(
+                text("SELECT status, COUNT(*) AS cnt FROM scrape_jobs GROUP BY status")
+            ).mappings().all():
+                total_jobs += row["cnt"]
+                if row["status"] == "completed":
+                    completed_jobs = row["cnt"]
+    except Exception:
+        pass
+
+    objectives: list = []
+    try:
+        objectives = (await _proxy_get("orchestrator", "/brain/objectives")).get("objectives", [])
+    except Exception:
+        objectives = []
+
+    schema_subjects: list = []
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            r = await client.get(f"{SERVICES['schema_registry']}/subjects")
+            if r.status_code == 200:
+                schema_subjects = r.json()
+    except Exception:
+        schema_subjects = []
+
+    def up(*keys: str) -> bool:
+        return all(services.get(k, {}).get("status") == "up" for k in keys)
+
+    readiness = {
+        "brain": bool(objectives) and up("orchestrator"),
+        "ingestion": up("platform_api"),
+        "streaming": bool(schema_subjects) and up("schema_registry"),
+        "multitenant": up("platform_api"),
+        "serving": any(up(k) for k in ("trading_bot", "marketplace", "aggregator")),
+        "portal": True,
+    }
+    capabilities = [{**c, "ready": bool(readiness.get(c["key"]))} for c in MVP_CAPABILITIES]
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "services_up": ov["services_up"],
+        "services_total": ov["services_total"],
+        "capabilities": capabilities,
+        "capabilities_ready": sum(1 for c in capabilities if c["ready"]),
+        "capabilities_total": len(capabilities),
+        "metrics": {
+            "tenants": tenants_count,
+            "completed_jobs": completed_jobs,
+            "total_jobs": total_jobs,
+            "brain_objectives": len(objectives),
+            "schemas": len(schema_subjects),
+        },
+        "objectives": [o.get("objective") for o in objectives],
+    }
+
+
+@app.post("/api/mvp/demo")
+async def mvp_demo(req: DemoRequest):
+    """Run a live end-to-end proof and stream the per-step results as JSON.
+
+    Steps: provision a starter tenant → submit an AI-planned scrape → wait for
+    the Kafka pipeline to complete the job → let the Brain plan/execute/verify
+    the pipeline objective. Every step reports pass/fail with real details.
+    """
+    import time
+
+    steps: list[dict] = []
+    result: dict = {"ok": False, "steps": steps}
+
+    def begin(key: str, label: str) -> tuple[dict, float]:
+        step = {"key": key, "label": label, "status": "running", "detail": "", "ms": 0}
+        steps.append(step)
+        return step, time.monotonic()
+
+    def finish(step: dict, t0: float, status: str, detail: str) -> None:
+        step["status"] = status
+        step["detail"] = detail[:240]
+        step["ms"] = int((time.monotonic() - t0) * 1000)
+
+    # 1. Provision a starter tenant (starter → shared raw_stream the host
+    #    stream processor consumes, so events reach processed_stream).
+    step, t0 = begin("tenant", "Provision starter tenant")
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                f"{SERVICES['platform_api']}/tenants",
+                json={"name": f"MVP Demo {int(time.time())}", "plan": "starter", "email": "demo@speedflow.local"},
+            )
+            r.raise_for_status()
+            data = r.json()
+        api_key, tenant_id = data["api_key"], data["tenant_id"]
+        finish(step, t0, "passed", f"tenant {tenant_id[:12]} · plan starter")
+    except Exception as exc:
+        finish(step, t0, "failed", f"platform-api error: {exc}")
+        return result
+
+    # 2. Submit an AI-planned scrape job.
+    step, t0 = begin("scrape", "Submit AI-planned scrape job")
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            r = await client.post(
+                f"{SERVICES['platform_api']}/scrape",
+                headers={"X-API-Key": api_key},
+                json={"requirement": f"Scrape page titles from {req.url}", "max_pages": 1},
+            )
+            r.raise_for_status()
+            job_id = r.json()["job_id"]
+        finish(step, t0, "passed", f"job {job_id[:12]} queued for {req.url}")
+    except Exception as exc:
+        finish(step, t0, "failed", f"scrape submit failed: {exc}")
+        return result
+
+    # 3. Wait for the pipeline (crawlee → raw_stream → stream processor) to
+    #    drive the job to completion.
+    step, t0 = begin("pipeline", "Crawl → raw_stream → processed_stream")
+    status, pages = "unknown", 0
+    for _ in range(40):
+        try:
+            with engine.connect() as conn:
+                row = conn.execute(
+                    text("SELECT status, pages_crawled FROM scrape_jobs WHERE job_id=:j"),
+                    {"j": job_id},
+                ).mappings().first()
+            if row:
+                status = row["status"] or "unknown"
+                pages = row["pages_crawled"] or 0
+        except Exception:
+            pass
+        if status in ("completed", "failed"):
+            break
+        await asyncio.sleep(1.5)
+    if status == "completed":
+        finish(step, t0, "passed", f"job completed · {pages} page(s) crawled & streamed")
+    else:
+        finish(step, t0, "failed", f"job status={status} after wait — see crawlee-worker logs")
+        return result
+
+    # 4. Brain plans, executes and verifies the pipeline objective live.
+    step, t0 = begin("brain", f"Brain verifies objective “{req.objective}”")
+    try:
+        async with httpx.AsyncClient(timeout=90) as client:
+            r = await client.post(
+                f"{SERVICES['orchestrator']}/brain/execute",
+                json={"objective": req.objective},
+            )
+            r.raise_for_status()
+            report = r.json()["report"]
+        summ = report["summary"]
+        ok = bool(report.get("success")) and summ["failed"] == 0 and summ["checks"] == summ["checks_passed"]
+        detail = f"{summ['passed']}/{summ['total']} steps · {summ['checks_passed']}/{summ['checks']} checks verified"
+        finish(step, t0, "passed" if ok else "failed", detail)
+        if not ok:
+            return result
+    except Exception as exc:
+        finish(step, t0, "failed", f"brain execute failed: {exc}")
+        return result
+
+    result["ok"] = True
+    return result
+
+
 static_dir = os.environ.get("PORTAL_STATIC_DIR", "/app/static")
 if os.path.isdir(static_dir):
     from fastapi.responses import FileResponse

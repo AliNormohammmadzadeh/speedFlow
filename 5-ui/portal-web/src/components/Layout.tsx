@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, useLocation, Link } from 'react-router-dom'
 import {
   Activity,
   Bot,
@@ -14,6 +14,7 @@ import {
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  Rocket,
   Shapes,
   Users,
   Workflow,
@@ -26,7 +27,8 @@ import { DetailProvider } from '../context/DetailContext'
 import { usePoll } from './ui'
 
 const NAV = [
-  { to: '/', icon: LayoutDashboard, label: 'Overview', desc: 'Health & pipeline' },
+  { to: '/overview', icon: LayoutDashboard, label: 'Overview', desc: 'Health & pipeline' },
+  { to: '/showcase', icon: Rocket, label: 'MVP Showcase', desc: 'Live end-to-end proof' },
   { to: '/canvas', icon: Workflow, label: 'Pipeline Canvas', desc: 'Live flow topology' },
   { to: '/ingestion', icon: Cloud, label: 'Ingestion', desc: 'Scrapers & jobs' },
   { to: '/stream', icon: Cpu, label: 'Stream Compute', desc: 'Kafka & Flink' },
@@ -40,7 +42,8 @@ const NAV = [
 ]
 
 const PAGE_TITLES: Record<string, string> = {
-  '/': 'Overview',
+  '/overview': 'Overview',
+  '/showcase': 'MVP Showcase',
   '/canvas': 'Pipeline Canvas',
   '/ingestion': 'Ingestion',
   '/stream': 'Stream Compute',
@@ -85,14 +88,18 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             w-72`}
         >
           <div className={`flex items-center gap-3 border-b border-white/10 ${collapsed ? 'justify-center px-3 py-5' : 'px-5 py-5'}`}>
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-cyan to-accent-violet shadow-lg shadow-accent-cyan/20">
+            <Link
+              to="/"
+              title="Back to landing page"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent-cyan to-accent-violet shadow-lg shadow-accent-cyan/20 transition hover:scale-105"
+            >
               <Zap className="h-5 w-5 text-white" />
-            </div>
+            </Link>
             {!collapsed && (
-              <div className="min-w-0">
+              <Link to="/" className="min-w-0">
                 <h1 className="text-lg font-bold tracking-tight">SpeedFlow</h1>
                 <p className="text-xs text-white/45">Control Portal 2026</p>
-              </div>
+              </Link>
             )}
             <button
               type="button"
@@ -109,7 +116,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <NavLink
                 key={to}
                 to={to}
-                end={to === '/'}
+                end={to === '/overview'}
                 title={collapsed ? label : undefined}
                 className={({ isActive }) =>
                   `nav-link group ${isActive ? 'nav-link-active' : ''} ${collapsed ? 'nav-link-collapsed' : ''}`
