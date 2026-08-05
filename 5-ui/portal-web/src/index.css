@@ -19,6 +19,11 @@ body {
   .glass {
     @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl;
   }
+  /* Blur-free glass for the landing page: avoids backdrop-filter compositing
+     artifacts when many cards scroll over the fixed animated background. */
+  .glass-flat {
+    @apply rounded-2xl border border-white/10 bg-[#0e0e18]/75;
+  }
   .glass-hover {
     @apply glass transition-all duration-300 hover:border-accent-cyan/30 hover:bg-white/[0.06];
   }

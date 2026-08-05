@@ -133,7 +133,7 @@ function Chip({
   return (
     <div className={`absolute ${className}`} style={{ transform: `translateZ(${depth}px)` }}>
       <div
-        className="chip-float glass holo flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-white/85 shadow-2xl"
+        className="chip-float glass-flat holo flex items-center gap-2 rounded-xl px-3 py-2 text-xs font-medium text-white/85 shadow-2xl"
         style={{ animationDelay: `${delay}s` }}
       >
         <Icon className="h-3.5 w-3.5 text-accent-cyan" />
@@ -315,7 +315,7 @@ export default function Landing() {
         {/* 3D holographic console preview */}
         <Reveal variant="reveal-scale" delay={200} className="[perspective:1400px]">
           <Tilt max={14} className="relative mx-auto max-w-md">
-            <div className="holo glass tilt-layer relative rounded-3xl p-6 shadow-2xl shadow-accent-violet/10">
+            <div className="holo glass-flat tilt-layer relative rounded-3xl p-6 shadow-2xl shadow-accent-violet/10">
               <div className="mb-5 flex items-center gap-2">
                 <span className="h-2.5 w-2.5 rounded-full bg-red-400/80" />
                 <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
@@ -398,7 +398,7 @@ export default function Landing() {
             { label: 'Jobs completed', node: status ? <CountUp value={status.metrics.completed_jobs} /> : '—' },
           ].map((s, i) => (
             <Reveal key={s.label} delay={i * 90} variant="reveal-scale">
-              <div className="holo glass card-3d px-5 py-4 text-center hover:-translate-y-1 hover:shadow-xl hover:shadow-accent-cyan/10">
+              <div className="holo glass-flat card-3d px-5 py-4 text-center hover:-translate-y-1 hover:shadow-xl hover:shadow-accent-cyan/10">
                 <p className="gradient-text text-3xl font-bold sm:text-4xl">{s.node ?? s.value}</p>
                 <p className="mt-1 text-xs font-medium uppercase tracking-wider text-white/45">{s.label}</p>
               </div>
@@ -417,8 +417,8 @@ export default function Landing() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3 [perspective:1200px]">
           {FEATURES.map(({ icon: Icon, title, desc, accent }, i) => (
             <Reveal key={title} delay={(i % 3) * 100} variant="reveal-scale">
-              <Tilt max={9}>
-                <div className="holo glass card-3d group h-full p-6 hover:border-accent-cyan/30 hover:shadow-2xl hover:shadow-accent-violet/10">
+              <Tilt max={13}>
+                <div className="holo glass-flat card-3d group h-full p-6 hover:border-accent-cyan/30 hover:shadow-2xl hover:shadow-accent-violet/10">
                   <div className={`mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br ${accent} shadow-lg transition duration-300 group-hover:-translate-y-1 group-hover:scale-110`} style={{ transform: 'translateZ(30px)' }}>
                     <Icon className="h-6 w-6 text-white" />
                   </div>
@@ -434,7 +434,7 @@ export default function Landing() {
       {/* architecture */}
       <section id="architecture" className="mx-auto max-w-7xl px-5 py-16 sm:px-8">
         <Reveal>
-          <div className="holo glass overflow-hidden p-8 sm:p-12">
+          <div className="holo glass-flat overflow-hidden p-8 sm:p-12">
             <div className="mb-10 text-center">
               <p className="text-sm font-semibold uppercase tracking-widest text-accent-violet/80">Architecture</p>
               <h2 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">A verified, real-time data pipeline</h2>
@@ -470,8 +470,8 @@ export default function Landing() {
         <div className="grid grid-cols-1 gap-5 md:grid-cols-3 [perspective:1200px]">
           {VERTICALS.map(({ icon: Icon, title, desc, accent }, i) => (
             <Reveal key={title} delay={i * 120} variant="reveal-scale">
-              <Tilt max={10}>
-                <div className={`holo glass card-3d group h-full bg-gradient-to-br ${accent} p-7 hover:shadow-2xl hover:shadow-accent-pink/10`}>
+              <Tilt max={14}>
+                <div className={`holo glass-flat card-3d group h-full bg-gradient-to-br ${accent} p-7 hover:shadow-2xl hover:shadow-accent-pink/10`}>
                   <Icon className="h-9 w-9 text-white/90 transition duration-300 group-hover:-translate-y-1 group-hover:scale-110" style={{ transform: 'translateZ(28px)' }} />
                   <h3 className="mt-4 text-xl font-semibold" style={{ transform: 'translateZ(16px)' }}>{title}</h3>
                   <p className="mt-2 text-sm leading-relaxed text-white/55">{desc}</p>
@@ -485,7 +485,7 @@ export default function Landing() {
       {/* CTA */}
       <section className="mx-auto max-w-7xl px-5 py-16 sm:px-8">
         <Reveal variant="reveal-scale">
-          <div className="holo glass relative overflow-hidden p-10 text-center sm:p-16">
+          <div className="holo glass-flat relative overflow-hidden p-10 text-center sm:p-16">
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-accent-cyan/10 via-accent-violet/10 to-accent-pink/10" />
             <div className="relative">
               <ShieldCheck className="mx-auto h-10 w-10 text-emerald-400" />
