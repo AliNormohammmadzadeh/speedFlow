@@ -55,6 +55,10 @@ export const api = {
   publishDataset: (body: object) => fetchJson<any>('/marketplace/datasets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   purchaseDataset: (id: string, body: object) => fetchJson<any>(`/marketplace/datasets/${id}/purchase`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   datasetRevenue: (id: string) => fetchJson<any>(`/marketplace/datasets/${id}/revenue`),
+  // MVP scorecard + live end-to-end proof (landing page & Showcase)
+  mvpStatus: () => fetchJson<any>('/mvp/status'),
+  mvpDemo: (body: object = {}) => fetchJson<any>('/mvp/demo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+
   logs: (name: string, lines = 80, container?: string) =>
     fetchJson<{ name: string; source?: string; path?: string; container?: string; lines: string[]; running: boolean }>(
       `/logs/${name}?lines=${lines}${container ? `&source=docker` : ''}`,
