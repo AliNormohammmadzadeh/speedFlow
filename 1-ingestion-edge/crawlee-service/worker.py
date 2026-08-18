@@ -12,9 +12,32 @@ from datetime import datetime, timezone
 
 import redis
 
+_SCRAPERS_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scrapers"))
 sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, _SCRAPERS_ROOT)
+os.environ.setdefault("CONFIG_PATH", os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "config")))
+
 from shared.job_status import update_scrape_job
 from shared.kafka_client import build_raw_event, create_producer, publish_event
+
+# Load AI shared guardrails without clobbering scrapers' `shared` package.
+import importlib.util
+
+_AI_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "0-ai-intelligence"))
+_AI_GUARDRAILS = os.path.join(_AI_ROOT, "shared", "scrape_guardrails.py")
+if "shared.utils" not in sys.modules:
+    _utils_path = os.path.join(_AI_ROOT, "shared", "utils.py")
+    _utils_spec = importlib.util.spec_from_file_location("shared.utils", _utils_path)
+    _utils_mod = importlib.util.module_from_spec(_utils_spec)
+    assert _utils_spec is not None and _utils_spec.loader is not None
+    sys.modules["shared.utils"] = _utils_mod
+    _utils_spec.loader.exec_module(_utils_mod)
+_spec = importlib.util.spec_from_file_location("scrape_guardrails", _AI_GUARDRAILS)
+_guardrails = importlib.util.module_from_spec(_spec)
+assert _spec.loader is not None
+_spec.loader.exec_module(_guardrails)
+ScrapeGuardrailViolation = _guardrails.ScrapeGuardrailViolation
+enforce_crawl_plan_guardrails = _guardrails.enforce_crawl_plan_guardrails
 
 from crawler import fetch_document, run_crawlee_job
 
@@ -72,11 +95,28 @@ def _sync_job_status(client: redis.Redis, job_id: str, **fields) -> None:
 async def process_job(job: dict, producer) -> dict:
     tenant_id = job.get("tenant_id", "platform")
     job_id = job.get("job_id", job.get("source_id", "unknown"))
+    client = get_redis()
+
+    try:
+        enforce_crawl_plan_guardrails(job)
+    except ScrapeGuardrailViolation as exc:
+        logger.warning("Guardrail blocked job %s: %s", job_id, exc.message)
+        _sync_job_status(
+            client,
+            job_id,
+            status="failed",
+            pages_crawled=0,
+            progress_pct=100,
+            error_message=f"Policy blocked: {exc.message}",
+            completed_at=datetime.now(timezone.utc),
+        )
+        if _METRICS:
+            JOBS_PROCESSED.labels(status="failed").inc()
+        return {"pages_crawled": 0, "blocked": True, "reason": exc.code}
     vertical = job.get("vertical") or "unknown"
     event_type = job.get("event_type") or "crawled_content"
     document_urls = [u for u in (job.get("document_urls") or []) if u]
     max_pages = int(job.get("max_pages", 50))
-    client = get_redis()
 
     results: list[dict] = []
     pages_done = 0
@@ -124,14 +164,36 @@ async def process_job(job: dict, producer) -> dict:
         return stats
 
     stats = await execute()
+    pages = max(int(stats.get("pages_crawled", 0)), len(results))
+    if pages == 0:
+        err = (
+            "No pages were crawled — the target may be blocked (403), unreachable, "
+            "or returned no usable content."
+        )
+        _sync_job_status(
+            client,
+            job_id,
+            status="failed",
+            pages_crawled=0,
+            progress_pct=100,
+            error_message=err,
+            completed_at=datetime.now(timezone.utc),
+        )
+        logger.warning("Job %s failed: 0 pages crawled", job_id)
+        stats["status"] = "failed"
+        stats["error_message"] = err
+        return stats
+
     _sync_job_status(
         client, job_id,
         status="completed",
-        pages_crawled=stats.get("pages_crawled", 0),
+        pages_crawled=pages,
         progress_pct=100,
+        error_message=None,
         completed_at=datetime.now(timezone.utc),
     )
     logger.info("Job %s done: %s", job_id, stats)
+    stats["status"] = "completed"
     return stats
 
 
@@ -167,8 +229,9 @@ async def worker_loop():
             job_id = job.setdefault("job_id", job.get("source_id", f"job-{WORKER_ID}"))
             _sync_job_status(client, job_id, status="running", progress_pct=0, pages_crawled=0)
             stats = await process_job(job, producer)
+            job_status = (stats or {}).get("status", "completed")
             if _METRICS:
-                JOBS_PROCESSED.labels(status="completed").inc()
+                JOBS_PROCESSED.labels(status=job_status).inc()
                 PAGES_CRAWLED.inc((stats or {}).get("pages_crawled", 0))
         except Exception as e:
             logger.exception("Job failed: %s", e)

@@ -66,7 +66,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     setMobileOpen(false)
   }, [location.pathname])
 
-  const pageTitle = PAGE_TITLES[location.pathname] || 'SpeedFlow'
+  const pageTitle = location.pathname.startsWith('/ingestion/jobs/')
+    ? 'Job Results'
+    : PAGE_TITLES[location.pathname] || 'SpeedFlow'
 
   return (
     <DetailProvider>

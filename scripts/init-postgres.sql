@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS processed_events (
 
 CREATE INDEX idx_processed_events_vertical ON processed_events(vertical);
 CREATE INDEX IF NOT EXISTS idx_processed_events_type ON processed_events(event_type);
-CREATE INDEX IF NOT EXISTS idx_processed_events_ts ON processed_events(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_processed_events_source_id ON processed_events(source_id);
 
 CREATE TABLE IF NOT EXISTS trading_signals (
     id SERIAL PRIMARY KEY,

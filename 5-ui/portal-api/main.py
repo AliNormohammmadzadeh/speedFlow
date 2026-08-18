@@ -151,6 +151,48 @@ def list_scrape_jobs(limit: int = 30):
         return []
 
 
+@app.get("/api/scrape-jobs/{job_id}")
+def get_scrape_job(job_id: str):
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("""
+                    SELECT sj.*, t.name AS tenant_name, t.plan
+                    FROM scrape_jobs sj
+                    LEFT JOIN tenants t ON t.tenant_id = sj.tenant_id
+                    WHERE sj.job_id = :jid
+                """),
+                {"jid": job_id},
+            ).mappings().first()
+        if not row:
+            raise HTTPException(404, f"Scrape job not found: {job_id}")
+        data = _serialize_row(row)
+        config = data.get("config")
+        if isinstance(config, str):
+            try:
+                import json as _json
+                data["config"] = _json.loads(config)
+            except Exception:
+                data["config"] = {}
+        elif config is None:
+            data["config"] = {}
+        return data
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(500, str(exc)) from exc
+
+
+@app.get("/api/scrape-jobs/{job_id}/events")
+def scrape_job_events(job_id: str, limit: int = 20):
+    from processed_events import fetch_job_events
+
+    result = fetch_job_events(engine, job_id, limit=limit)
+    if not result.get("found"):
+        raise HTTPException(404, f"Scrape job not found: {job_id}")
+    return result
+
+
 @app.get("/api/tenants")
 def list_tenants():
     try:
@@ -946,24 +988,36 @@ async def mvp_demo(req: DemoRequest):
     # 3. Wait for the pipeline (crawlee → raw_stream → stream processor) to
     #    drive the job to completion.
     step, t0 = begin("pipeline", "Crawl → raw_stream → processed_stream")
-    status, pages = "unknown", 0
+    status, pages, error_message = "unknown", 0, ""
     for _ in range(40):
         try:
             with engine.connect() as conn:
                 row = conn.execute(
-                    text("SELECT status, pages_crawled FROM scrape_jobs WHERE job_id=:j"),
+                    text("SELECT status, pages_crawled, error_message FROM scrape_jobs WHERE job_id=:j"),
                     {"j": job_id},
                 ).mappings().first()
             if row:
                 status = row["status"] or "unknown"
                 pages = row["pages_crawled"] or 0
+                error_message = row.get("error_message") or ""
         except Exception:
             pass
         if status in ("completed", "failed"):
             break
         await asyncio.sleep(1.5)
-    if status == "completed":
+    if status == "completed" and pages > 0:
         finish(step, t0, "passed", f"job completed · {pages} page(s) crawled & streamed")
+    elif status == "completed" and pages == 0:
+        finish(
+            step,
+            t0,
+            "failed",
+            error_message or "job completed with 0 pages — target blocked or unreachable",
+        )
+        return result
+    elif status == "failed":
+        finish(step, t0, "failed", error_message or f"job failed after wait (status={status})")
+        return result
     else:
         finish(step, t0, "failed", f"job status={status} after wait — see crawlee-worker logs")
         return result

@@ -15,11 +15,11 @@ API_KEY=$(echo "$TENANT" | python3 -c "import sys,json; print(json.load(sys.stdi
 TENANT_ID=$(echo "$TENANT" | python3 -c "import sys,json; print(json.load(sys.stdin)['tenant_id'])")
 echo "    tenant=$TENANT_ID"
 
-echo "==> Submitting scrape job (httpbin, max 2 pages)..."
+echo "==> Submitting scrape job (example.com, max 2 pages)..."
 JOB=$(curl -sf -X POST "$API/scrape" \
   -H "Content-Type: application/json" \
   -H "X-API-Key: $API_KEY" \
-  -d '{"requirement":"Scrape page titles from https://httpbin.org/html","max_pages":2}')
+  -d '{"requirement":"Scrape page titles from https://example.com","max_pages":2}')
 JOB_ID=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
 echo "    job_id=$JOB_ID"
 

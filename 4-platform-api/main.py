@@ -25,6 +25,17 @@ from starlette.responses import Response
 import auth as auth_mod
 from middleware import TenantQuotaMiddleware, enforce_daily_quota, get_daily_usage
 
+# Shared scrape policy (0-ai-intelligence/shared) — same module as orchestrator + worker.
+import sys
+from pathlib import Path as _Path
+
+_AI_ROOT = _Path(__file__).resolve().parent.parent / "0-ai-intelligence"
+if _AI_ROOT.is_dir() and str(_AI_ROOT) not in sys.path:
+    sys.path.insert(0, str(_AI_ROOT))
+os.environ.setdefault("CONFIG_PATH", str(_Path(__file__).resolve().parent.parent / "config"))
+
+from shared.scrape_guardrails import ScrapeGuardrailViolation, enforce_scrape_guardrails
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -32,6 +43,9 @@ logger = logging.getLogger(__name__)
 TENANTS_CREATED = Counter("speedflow_tenants_created_total", "Tenants created", ["plan"])
 SCRAPES_SUBMITTED = Counter("speedflow_scrapes_submitted_total", "Scrape jobs submitted", ["plan"])
 SCRAPE_ERRORS = Counter("speedflow_scrape_errors_total", "Scrape submission errors")
+SCRAPE_GUARDRAIL_BLOCKS = Counter(
+    "speedflow_scrape_guardrail_blocks_total", "Scrape requests blocked by guardrails", ["code"]
+)
 
 DATABASE_URL = (
     f"postgresql://{os.environ.get('POSTGRES_USER', 'admin')}:"
@@ -609,6 +623,13 @@ async def request_scrape(
     features = plan.get("features", {})
 
     await enforce_daily_quota(redis, tenant["tenant_id"], limits.get("scrape_requests_per_day", 50))
+
+    try:
+        enforce_scrape_guardrails(req.requirement, url=req.url, max_pages=req.max_pages)
+    except ScrapeGuardrailViolation as exc:
+        SCRAPE_GUARDRAIL_BLOCKS.labels(code=exc.code).inc()
+        logger.warning("Scrape guardrail blocked tenant=%s code=%s", tenant["tenant_id"], exc.code)
+        raise HTTPException(422, detail=exc.as_dict()) from exc
 
     orchestrator_url = os.environ.get("AI_ORCHESTRATOR_URL", "http://ai-orchestrator:8000")
     async with httpx.AsyncClient(timeout=60) as client:

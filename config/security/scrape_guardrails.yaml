@@ -1,0 +1,84 @@
+# Scrape request guardrails — only public web/API data collection is allowed.
+# Enforced at Platform API, orchestrator, and crawlee worker (defense in depth).
+
+version: "1.0"
+
+limits:
+  requirement_min_length: 10
+  requirement_max_length: 4000
+  max_urls_per_job: 25
+
+# At least one keyword required when no http(s) URL is present in the requirement.
+scrape_intent_keywords:
+  - scrape
+  - crawl
+  - fetch
+  - extract
+  - collect
+  - gather
+  - monitor
+  - track
+  - retrieve
+  - pull
+  - read
+  - harvest
+  - ingest
+  - capture
+  - snapshot
+  - prices
+  - odds
+  - listings
+  - titles
+  - headlines
+  - articles
+  - stats
+  - scores
+  - feed
+  - dataset
+  - page content
+  - web data
+  - api data
+
+# Blocked if any pattern matches the requirement text (case-insensitive regex).
+forbidden_intent_patterns:
+  - pattern: "(?i)\\b(hack|exploit|bypass\\s+login|brute\\s*force|crack\\s+password|credential\\s+stuffing)\\b"
+    code: non_scrape_security
+    message: "Requests involving hacking or credential attacks are not allowed."
+
+  - pattern: "(?i)\\b(ddos|denial\\s+of\\s+service|flood\\s+requests|spam\\s+users|mass\\s+email)\\b"
+    code: abuse
+    message: "Abusive or spam-related actions are not allowed."
+
+  - pattern: "(?i)\\b(send\\s+email|post\\s+comment|create\\s+account|sign\\s*up\\s+users|login\\s+as|impersonate)\\b"
+    code: non_scrape_action
+    message: "Only read-only data collection is allowed — not posting, signup, or impersonation."
+
+  - pattern: "(?i)\\b(delete\\s+data|drop\\s+table|sql\\s+injection|xss\\s+payload|run\\s+shell|execute\\s+command|rm\\s+-rf)\\b"
+    code: destructive
+    message: "Destructive or injection-style actions are not allowed."
+
+  - pattern: "(?i)\\b(steal\\s+password|dump\\s+credentials|phish|wallet\\s+seed|private\\s+key)\\b"
+    code: credential_theft
+    message: "Credential or secrets theft is not allowed."
+
+  - pattern: "(?i)\\b(port\\s+scan|network\\s+scan|scan\\s+internal|metadata\\s+service)\\b"
+    code: network_probe
+    message: "Internal network probing is not allowed — only public web/API targets."
+
+  - pattern: "(?i)\\b(scrape\\s+emails\\s+for\\s+marketing|buy\\s+email\\s+list|spam\\s+campaign|harvest\\s+email|email\\s+addresses\\s+for\\s+spam|spam\\s+harvest)\\b"
+    code: spam_harvest
+    message: "Bulk email harvesting for spam is not allowed."
+
+allowed_url_schemes:
+  - http
+  - https
+
+blocked_url_hosts:
+  - localhost
+  - 127.0.0.1
+  - 0.0.0.0
+  - metadata.google.internal
+
+# AWS/GCP/Azure metadata & link-local (SSRF hardening)
+block_private_ips: true
+block_link_local: true

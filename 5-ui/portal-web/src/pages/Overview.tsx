@@ -3,6 +3,7 @@ import { api } from '../api'
 import PipelineFlow from '../components/PipelineFlow'
 import { Card, ClickableRow, PageHeader, Skeleton, StatCard, StatusBadge, usePoll } from '../components/ui'
 import { useDetail } from '../context/DetailContext'
+import { resolveJobStatus } from '../lib/jobDisplay'
 import { SERVICE_META } from '../lib/serviceMeta'
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -37,12 +38,7 @@ export default function Overview() {
   }
 
   const openJob = (job: Record<string, unknown>) => {
-    openDetail({
-      title: `Job ${String(job.job_id).slice(0, 12)}`,
-      subtitle: String(job.requirement || '').slice(0, 80),
-      kind: 'job',
-      data: job,
-    })
+    navigate(`/ingestion/jobs/${job.job_id}`)
   }
 
   return (
@@ -68,7 +64,7 @@ export default function Overview() {
         />
         <StatCard
           label="Completed Jobs"
-          value={jobs?.filter(j => j.status === 'completed').length ?? 0}
+          value={jobs?.filter(j => resolveJobStatus(j).status === 'completed').length ?? 0}
           accent="violet"
           onClick={() => navigate('/ingestion')}
         />
@@ -141,12 +137,14 @@ export default function Overview() {
               <p className="text-white/40">No scrape jobs yet</p>
             )}
           </div>
-          {jobs?.slice(0, 3).map(job => (
+          {jobs?.slice(0, 3).map(job => {
+            const resolved = resolveJobStatus(job)
+            return (
             <ClickableRow key={job.job_id} onClick={() => openJob(job)} className="mt-2">
               <span className="font-mono text-accent-cyan">{job.job_id?.slice(0, 10)}</span>
-              <StatusBadge status={job.status === 'completed' ? 'up' : job.status === 'failed' ? 'down' : 'degraded'} />
+              <StatusBadge status={resolved.badge} />
             </ClickableRow>
-          ))}
+          )})}
         </Card>
       </div>
     </div>

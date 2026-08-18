@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { ExternalLink, FileText, HeartPulse, X } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { ExternalLink, FileText, HeartPulse, Layers, X } from 'lucide-react'
 import { api } from '../api'
 import { useDetail } from '../context/DetailContext'
 import { StatusBadge } from './ui'
@@ -33,6 +34,18 @@ export default function DetailDrawer() {
 
   const health = detail.data?.health as Record<string, unknown> | undefined
   const status = (health?.status as string) || (detail.data?.status as string) || undefined
+  const jobId = detail.kind === 'job' ? String(detail.data?.job_id || '') : ''
+
+  const tabs: { id: Tab; label: string; Icon: typeof FileText; show: boolean }[] = [
+    { id: 'info', label: 'Info', Icon: FileText, show: true },
+    { id: 'health', label: 'Health', Icon: HeartPulse, show: true },
+    {
+      id: 'logs',
+      label: 'Logs',
+      Icon: FileText,
+      show: !!(detail.logName || detail.data?.container),
+    },
+  ]
 
   return (
     <>
@@ -57,26 +70,17 @@ export default function DetailDrawer() {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={closeDetail}
-            className="btn-icon shrink-0"
-            aria-label="Close"
-          >
+          <button type="button" onClick={closeDetail} className="btn-icon shrink-0" aria-label="Close">
             <X className="h-5 w-5" />
           </button>
         </header>
 
         <div className="flex gap-1 border-b border-white/10 px-4">
-          {([
-            ['info', 'Info', FileText],
-            ['health', 'Health', HeartPulse],
-            ...(detail.logName || detail.data?.container ? [['logs', 'Logs', FileText] as const] : []),
-          ] as const).map(([id, label, Icon]) => (
+          {tabs.filter(t => t.show).map(({ id, label, Icon }) => (
             <button
               key={id}
               type="button"
-              onClick={() => setTab(id as Tab)}
+              onClick={() => setTab(id)}
               className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium transition ${
                 tab === id
                   ? 'border-accent-cyan text-accent-cyan'
@@ -92,18 +96,29 @@ export default function DetailDrawer() {
         <div className="flex-1 overflow-y-auto p-6">
           {tab === 'info' && (
             <div className="space-y-4">
+              {detail.kind === 'job' && jobId && (
+                <Link
+                  to={`/ingestion/jobs/${jobId}`}
+                  onClick={closeDetail}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent-violet/10 px-4 py-3 text-sm font-medium text-accent-violet ring-1 ring-accent-violet/30 transition hover:bg-accent-violet/20"
+                >
+                  <Layers className="h-4 w-4" />
+                  Open full job results page
+                </Link>
+              )}
               {detail.data?.description && (
                 <p className="text-sm leading-relaxed text-white/70">{String(detail.data.description)}</p>
               )}
-              {detail.data?.layer && (
-                <Row label="Layer" value={String(detail.data.layer)} />
+              {detail.kind === 'job' && detail.data && (
+                <>
+                  <Row label="Job ID" value={String(detail.data.job_id || '—')} mono />
+                  <Row label="Status" value={String(detail.data.status || '—')} />
+                  <Row label="Pages" value={String(detail.data.pages_crawled ?? 0)} />
+                </>
               )}
-              {detail.data?.port != null && (
-                <Row label="Port" value={String(detail.data.port)} mono />
-              )}
-              {detail.data?.container && (
-                <Row label="Container" value={String(detail.data.container)} mono />
-              )}
+              {detail.data?.layer && <Row label="Layer" value={String(detail.data.layer)} />}
+              {detail.data?.port != null && <Row label="Port" value={String(detail.data.port)} mono />}
+              {detail.data?.container && <Row label="Container" value={String(detail.data.container)} mono />}
               {detail.healthUrl && (
                 <a
                   href={detail.healthUrl}
@@ -115,9 +130,9 @@ export default function DetailDrawer() {
                   <ExternalLink className="h-3.5 w-3.5" />
                 </a>
               )}
-              {detail.data && Object.keys(detail.data).length > 0 && (
+              {detail.kind !== 'job' && detail.data && Object.keys(detail.data).length > 0 && (
                 <div>
-                  <p className="mb-2 text-xs font-medium uppercase text-white/40">Raw data</p>
+                  <p className="mb-2 text-xs font-medium uppercase text-white/40">Details</p>
                   <pre className="max-h-80 overflow-auto rounded-xl bg-black/50 p-4 text-xs leading-relaxed text-white/70">
                     {JSON.stringify(detail.data, null, 2)}
                   </pre>
@@ -147,20 +162,6 @@ export default function DetailDrawer() {
                   {logs.length ? logs.join('\n') : '(empty log)'}
                 </pre>
               )}
-              <button
-                type="button"
-                className="mt-4 text-xs text-accent-cyan hover:underline"
-                onClick={() => {
-                  setLogsLoading(true)
-                  const logKey = detail.logName || String(detail.data?.container)
-                  const useDocker = !detail.logName && !!detail.data?.container
-                  api.logs(logKey, 80, useDocker ? String(detail.data?.container) : undefined)
-                    .then(r => setLogs(r.lines || []))
-                    .finally(() => setLogsLoading(false))
-                }}
-              >
-                Refresh logs
-              </button>
             </div>
           )}
         </div>

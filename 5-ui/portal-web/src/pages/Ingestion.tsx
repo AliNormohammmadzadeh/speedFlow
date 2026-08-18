@@ -1,9 +1,13 @@
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { Card, ClickableRow, PageHeader, ProgressBar, StatusBadge, usePoll } from '../components/ui'
+import { Card, PageHeader, ProgressBar, StatusBadge, usePoll } from '../components/ui'
 import { useDetail } from '../context/DetailContext'
+import { jobFailureMessage, resolveJobStatus } from '../lib/jobDisplay'
 import { SCRAPER_META, SERVICE_META } from '../lib/serviceMeta'
+import { AlertTriangle, Layers } from 'lucide-react'
 
 export default function Ingestion() {
+  const navigate = useNavigate()
   const { data: jobs } = usePoll(() => api.scrapeJobs())
   const { data: overview } = usePoll(() => api.overview())
   const { data: pipeline } = usePoll(() => api.pipeline())
@@ -15,7 +19,7 @@ export default function Ingestion() {
 
   return (
     <div>
-      <PageHeader title="Ingestion Edge" subtitle="Click scrapers, jobs, or workers for logs and full details" />
+      <PageHeader title="Ingestion Edge" subtitle="Monitor scrape jobs and open full pipeline results for each job" />
 
       <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         {scrapers.map(s => {
@@ -61,38 +65,54 @@ export default function Ingestion() {
                 <th className="pb-3 pr-4">Status</th>
                 <th className="pb-3 pr-4">Progress</th>
                 <th className="pb-3 pr-4">Pages</th>
+                <th className="pb-3 pr-4">Results</th>
                 <th className="pb-3">Requirement</th>
               </tr>
             </thead>
             <tbody>
-              {jobs?.map(job => (
+              {jobs?.map(job => {
+                const resolved = resolveJobStatus(job)
+                const err = jobFailureMessage(job)
+                return (
                 <tr
                   key={job.job_id}
                   className="clickable-table-row border-b border-white/5"
-                  onClick={() => openDetail({
-                    title: `Scrape Job ${job.job_id}`,
-                    subtitle: job.tenant_name || job.tenant_id,
-                    kind: 'job',
-                    logName: 'crawlee-worker',
-                    data: job,
-                  })}
+                  onClick={() => navigate(`/ingestion/jobs/${job.job_id}`)}
                 >
                   <td className="py-3 pr-4 font-mono text-accent-cyan">{job.job_id?.slice(0, 12)}</td>
                   <td className="py-3 pr-4">{job.tenant_name || job.tenant_id}</td>
                   <td className="py-3 pr-4">
-                    <StatusBadge status={job.status === 'completed' ? 'up' : job.status === 'failed' ? 'down' : 'degraded'} />
-                    <span className="ml-2 text-xs">{job.status}</span>
+                    <StatusBadge status={resolved.badge} />
+                    <span className={`ml-2 text-xs ${resolved.failed ? 'text-red-300' : ''}`}>
+                      {resolved.status}
+                    </span>
+                    {err && (
+                      <p className="mt-1 max-w-xs truncate text-[11px] text-red-300/80" title={err}>
+                        <AlertTriangle className="mr-1 inline h-3 w-3" />
+                        {err}
+                      </p>
+                    )}
                   </td>
                   <td className="w-40 py-3 pr-4">
                     <ProgressBar value={job.progress_pct || 0} />
                     <span className="text-xs text-white/40">{job.progress_pct || 0}%</span>
                   </td>
                   <td className="py-3 pr-4">{job.pages_crawled || 0}</td>
+                  <td className="py-3 pr-4">
+                    <Link
+                      to={`/ingestion/jobs/${job.job_id}`}
+                      onClick={e => e.stopPropagation()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-accent-violet/10 px-2.5 py-1.5 text-xs font-medium text-accent-violet ring-1 ring-accent-violet/30 transition hover:bg-accent-violet/20"
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      View
+                    </Link>
+                  </td>
                   <td className="max-w-xs truncate py-3 text-white/60">{job.requirement}</td>
                 </tr>
-              ))}
+              )})}
               {!jobs?.length && (
-                <tr><td colSpan={6} className="py-8 text-center text-white/40">No jobs yet — create a tenant and submit a scrape</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-white/40">No jobs yet — create a tenant and submit a scrape</td></tr>
               )}
             </tbody>
           </table>

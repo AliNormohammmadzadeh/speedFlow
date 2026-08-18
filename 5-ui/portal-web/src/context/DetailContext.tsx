@@ -2,6 +2,8 @@ import React, { createContext, useCallback, useContext, useState } from 'react'
 
 export type DetailKind = 'service' | 'job' | 'pipeline' | 'schema' | 'agent' | 'tenant' | 'connector' | 'scraper' | 'topic' | 'generic'
 
+export type DetailTab = 'info' | 'health' | 'logs'
+
 export type DetailPayload = {
   title: string
   subtitle?: string
@@ -10,6 +12,7 @@ export type DetailPayload = {
   serviceKey?: string
   logName?: string
   healthUrl?: string
+  initialTab?: DetailTab
 }
 
 type DetailContextValue = {

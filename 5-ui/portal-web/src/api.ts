@@ -1,14 +1,23 @@
 const BASE = '/api'
 
-async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(`${BASE}${path}`, init)
-  if (!r.ok) throw new Error(await r.text())
-  return r.json()
+async function fetchJson<T>(path: string, init?: RequestInit, timeoutMs = 30000): Promise<T> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const r = await fetch(`${BASE}${path}`, { ...init, signal: controller.signal })
+    if (!r.ok) throw new Error(await r.text())
+    return r.json()
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export const api = {
   overview: () => fetchJson<any>('/overview'),
   scrapeJobs: () => fetchJson<any[]>('/scrape-jobs'),
+  scrapeJob: (jobId: string) => fetchJson<any>(`/scrape-jobs/${encodeURIComponent(jobId)}`),
+  scrapeJobEvents: (jobId: string, limit = 20) =>
+    fetchJson<any>(`/scrape-jobs/${encodeURIComponent(jobId)}/events?limit=${limit}`, undefined, 45000),
   tenants: () => fetchJson<any[]>('/tenants'),
   createTenant: (body: object) => fetchJson<any>('/tenants', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
   scrape: (body: object) => fetchJson<any>('/scrape', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),

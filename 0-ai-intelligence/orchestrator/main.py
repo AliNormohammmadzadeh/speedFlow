@@ -23,6 +23,7 @@ from bridges.config_bridge import ConfigBridge
 from bridges.processing_bridge import ProcessingBridge
 from bridges.scraper_bridge import ScraperBridge
 from shared.governance import AgentGovernance
+from shared.scrape_guardrails import ScrapeGuardrailViolation, enforce_crawl_plan_guardrails, enforce_scrape_guardrails
 from shared.utils import AgentState
 from shared.verticals import VerticalRegistry
 
@@ -431,10 +432,20 @@ class ScrapePlanResponse(BaseModel):
 @app.post("/scrape/plan", response_model=ScrapePlanResponse)
 async def plan_and_queue_scrape(req: ScrapePlanRequest):
     """AI selects Crawlee parameters from user requirement and queues the job."""
+    hints = req.hints or {}
+    try:
+        enforce_scrape_guardrails(
+            req.requirement,
+            url=hints.get("url"),
+            max_pages=hints.get("max_pages"),
+        )
+    except ScrapeGuardrailViolation as exc:
+        raise HTTPException(422, detail=exc.as_dict()) from exc
+
     plan = await scrape_planner.plan_from_requirement(
         req.requirement,
         tenant_id=req.tenant_id,
-        hints=req.hints,
+        hints=hints,
     )
 
     # Enforce subscription limits
@@ -453,6 +464,11 @@ async def plan_and_queue_scrape(req: ScrapePlanRequest):
 
     if features.get("dedicated_kafka_topic") and req.tenant_id:
         plan["kafka_topic"] = f"raw_stream_{req.tenant_id}"
+
+    try:
+        enforce_crawl_plan_guardrails(plan)
+    except ScrapeGuardrailViolation as exc:
+        raise HTTPException(422, detail=exc.as_dict()) from exc
 
     result = scraper_bridge.push_crawl_job(plan, tenant_id=req.tenant_id)
     return ScrapePlanResponse(

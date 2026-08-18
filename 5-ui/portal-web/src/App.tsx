@@ -5,6 +5,7 @@ import Overview from './pages/Overview'
 import Showcase from './pages/Showcase'
 import PipelineCanvas from './pages/PipelineCanvas'
 import Ingestion from './pages/Ingestion'
+import ScrapeJobDetail from './pages/ScrapeJobDetail'
 import Stream from './pages/Stream'
 import AIAgents from './pages/AIAgents'
 import Brain from './pages/Brain'
@@ -31,6 +32,7 @@ export default function App() {
         <Route path="/showcase" element={<Showcase />} />
         <Route path="/canvas" element={<PipelineCanvas />} />
         <Route path="/ingestion" element={<Ingestion />} />
+        <Route path="/ingestion/jobs/:jobId" element={<ScrapeJobDetail />} />
         <Route path="/stream" element={<Stream />} />
         <Route path="/ai" element={<AIAgents />} />
         <Route path="/brain" element={<Brain />} />

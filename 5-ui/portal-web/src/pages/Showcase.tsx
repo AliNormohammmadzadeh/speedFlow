@@ -30,12 +30,19 @@ function StepIcon({ status }: { status: DemoStep['status'] }) {
   return <Circle className="h-5 w-5 text-white/25" />
 }
 
+const DEMO_URL_PRESETS = [
+  { label: 'Example.com', url: 'https://example.com' },
+  { label: 'HTTPBin HTML', url: 'https://httpbin.org/html' },
+  { label: 'Books demo', url: 'https://books.toscrape.com' },
+]
+
 export default function Showcase() {
   const { data: status } = usePoll(() => api.mvpStatus(), 5000)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<DemoResult | null>(null)
   const [activeIdx, setActiveIdx] = useState(0)
   const [elapsed, setElapsed] = useState(0)
+  const [demoUrl, setDemoUrl] = useState('https://example.com')
   const timers = useRef<number[]>([])
 
   useEffect(() => () => timers.current.forEach(clearInterval), [])
@@ -50,7 +57,7 @@ export default function Showcase() {
     const advance = window.setInterval(() => setActiveIdx(i => Math.min(i + 1, EXPECTED.length - 1)), 4000)
     timers.current = [tick, advance]
     try {
-      const res = await api.mvpDemo({})
+      const res = await api.mvpDemo({ url: demoUrl.trim() || 'https://example.com' })
       setResult(res)
     } catch (e) {
       setResult({ ok: false, steps: [{ key: 'error', label: 'Demo request failed', status: 'failed', detail: String(e) }] })
@@ -121,10 +128,41 @@ export default function Showcase() {
             )}
           </div>
 
-          <p className="mb-5 text-sm text-white/55">
+          <p className="mb-4 text-sm text-white/55">
             Runs the real pipeline: provision a tenant → submit an AI-planned scrape → stream it through Kafka → let the
             Brain plan, execute and verify every step.
           </p>
+
+          <div className="mb-5 space-y-3">
+            <label className="block text-xs font-medium uppercase tracking-wide text-white/40">
+              Demo target URL
+            </label>
+            <input
+              type="url"
+              value={demoUrl}
+              onChange={e => setDemoUrl(e.target.value)}
+              disabled={running}
+              placeholder="https://example.com"
+              className="input-field w-full font-mono text-sm"
+            />
+            <div className="flex flex-wrap gap-2">
+              {DEMO_URL_PRESETS.map(p => (
+                <button
+                  key={p.url}
+                  type="button"
+                  disabled={running}
+                  onClick={() => setDemoUrl(p.url)}
+                  className={`rounded-lg px-3 py-1.5 text-xs ring-1 transition ${
+                    demoUrl === p.url
+                      ? 'bg-accent-cyan/15 text-accent-cyan ring-accent-cyan/30'
+                      : 'bg-white/5 text-white/60 ring-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <button
             type="button"
