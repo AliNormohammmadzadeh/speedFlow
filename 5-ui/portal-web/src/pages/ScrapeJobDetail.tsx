@@ -22,6 +22,7 @@ import {
 import { api } from '../api'
 import { Card, StatCard, StatusBadge, usePoll } from '../components/ui'
 import {
+  crawlerEngineLabel,
   extractDisplayFields,
   extractUrlsFromText,
   formatIso,
@@ -173,6 +174,7 @@ export default function ScrapeJobDetail() {
   const planFields = extractDisplayFields({
     type: config.type,
     vertical: config.vertical,
+    crawler_engine: crawlerEngineLabel(config.crawler_engine || config.crawler_type),
     max_pages: config.max_pages,
     max_depth: config.max_depth,
     event_type: config.event_type,

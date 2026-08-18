@@ -10,6 +10,7 @@ export default function Tenants() {
   const [plan, setPlan] = useState('pro')
   const [apiKey, setApiKey] = useState('')
   const [requirement, setRequirement] = useState('Scrape titles from https://news.ycombinator.com')
+  const [crawlerEngine, setCrawlerEngine] = useState('auto')
   const [message, setMessage] = useState('')
   const { openDetail } = useDetail()
 
@@ -27,7 +28,12 @@ export default function Tenants() {
   const submitScrape = async () => {
     if (!apiKey) { setMessage('Create or paste an API key first'); return }
     try {
-      const job = await api.scrape({ requirement, api_key: apiKey, max_pages: 10 })
+      const job = await api.scrape({
+        requirement,
+        api_key: apiKey,
+        max_pages: 10,
+        crawler_engine: crawlerEngine,
+      })
       setMessage(`Scrape job queued: ${job.job_id}`)
     } catch (e) {
       setMessage(String(e))
@@ -76,6 +82,21 @@ export default function Tenants() {
               value={requirement}
               onChange={e => setRequirement(e.target.value)}
             />
+            <label className="block text-xs text-white/45">
+              Crawler engine
+              <select
+                className="input-field mt-1"
+                value={crawlerEngine}
+                onChange={e => setCrawlerEngine(e.target.value)}
+              >
+                <option value="auto">Auto (AI picks)</option>
+                <option value="fallback">HTTP fallback — fast static pages</option>
+                <option value="crawlee">Crawlee + BeautifulSoup</option>
+                <option value="crawlee_playwright" disabled={plan === 'starter'}>
+                  Crawlee + Playwright {plan === 'starter' ? '(Pro+)' : '— JS sites'}
+                </option>
+              </select>
+            </label>
             <button type="button" onClick={submitScrape} className="btn-action-secondary w-full">
               Submit Scrape
             </button>

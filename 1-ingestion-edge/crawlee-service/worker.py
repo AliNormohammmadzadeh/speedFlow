@@ -165,6 +165,11 @@ async def process_job(job: dict, producer) -> dict:
 
     stats = await execute()
     pages = max(int(stats.get("pages_crawled", 0)), len(results))
+    engine_fields = {
+        k: stats[k]
+        for k in ("engine", "engine_requested", "engine_fallback_reason")
+        if stats.get(k)
+    }
     if pages == 0:
         err = (
             "No pages were crawled — the target may be blocked (403), unreachable, "
@@ -178,6 +183,7 @@ async def process_job(job: dict, producer) -> dict:
             progress_pct=100,
             error_message=err,
             completed_at=datetime.now(timezone.utc),
+            **engine_fields,
         )
         logger.warning("Job %s failed: 0 pages crawled", job_id)
         stats["status"] = "failed"
@@ -191,6 +197,7 @@ async def process_job(job: dict, producer) -> dict:
         progress_pct=100,
         error_message=None,
         completed_at=datetime.now(timezone.utc),
+        **engine_fields,
     )
     logger.info("Job %s done: %s", job_id, stats)
     stats["status"] = "completed"

@@ -170,6 +170,10 @@ class ScrapeRequest(BaseModel):
     url: str | None = None
     vertical: str | None = None
     max_pages: int | None = None
+    crawler_engine: str | None = Field(
+        default=None,
+        description="Crawl engine: auto, fallback, crawlee, or crawlee_playwright",
+    )
 
 
 class ScrapeJobResponse(BaseModel):
@@ -235,6 +239,14 @@ def enforce_plan_limits(tenant: dict, scrape_req: ScrapeRequest) -> dict:
 def _merge_job_row(row: dict, live: dict | None = None) -> ScrapeJobResponse:
     data = dict(row)
     live = live or {}
+    config = data.get("config")
+    if isinstance(config, str):
+        try:
+            config = json.loads(config)
+        except Exception:
+            config = None
+    elif not isinstance(config, dict):
+        config = None
     return ScrapeJobResponse(
         job_id=data["job_id"],
         tenant_id=data["tenant_id"],
@@ -242,7 +254,7 @@ def _merge_job_row(row: dict, live: dict | None = None) -> ScrapeJobResponse:
         pages_crawled=int(live.get("pages_crawled") or data.get("pages_crawled") or 0),
         progress_pct=int(live.get("progress_pct") or data.get("progress_pct") or 0),
         error_message=live.get("error_message") or data.get("error_message"),
-        plan=json.loads(data["config"]) if data.get("config") else None,
+        plan=config,
     )
 
 
@@ -642,6 +654,7 @@ async def request_scrape(
                     "url": req.url,
                     "vertical": req.vertical,
                     "max_pages": req.max_pages or limits.get("max_pages_per_job", 20),
+                    "crawler_engine": req.crawler_engine or "auto",
                 },
                 "plan_limits": limits,
                 "plan_features": features,

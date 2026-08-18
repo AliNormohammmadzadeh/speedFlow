@@ -65,6 +65,8 @@ class ScrapeRequest(BaseModel):
     requirement: str
     api_key: str
     max_pages: int | None = 10
+    crawler_engine: str | None = "auto"
+    url: str | None = None
 
 
 @asynccontextmanager
@@ -224,7 +226,12 @@ async def submit_scrape(req: ScrapeRequest):
             r = await client.post(
                 f"{SERVICES['platform_api']}/scrape",
                 headers={"X-API-Key": req.api_key},
-                json={"requirement": req.requirement, "max_pages": req.max_pages},
+                json={
+                    "requirement": req.requirement,
+                    "max_pages": req.max_pages,
+                    "crawler_engine": req.crawler_engine,
+                    "url": req.url,
+                },
             )
             if r.status_code >= 400:
                 raise HTTPException(r.status_code, r.text)

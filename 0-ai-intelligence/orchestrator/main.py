@@ -459,8 +459,13 @@ async def plan_and_queue_scrape(req: ScrapePlanRequest):
         plan["proxy_tier"] = features["proxy_tier"]
 
     allowed = features.get("scrapers", ["crawlee"])
-    if plan.get("crawler_type") == "playwright" and "crawlee_playwright" not in allowed:
-        plan["crawler_type"] = "beautifulsoup"
+    from shared.crawler_engine import apply_engine_to_plan
+
+    apply_engine_to_plan(
+        plan,
+        req.requirement,
+        {**hints, "allowed_scrapers": allowed, "plan_features": features},
+    )
 
     if features.get("dedicated_kafka_topic") and req.tenant_id:
         plan["kafka_topic"] = f"raw_stream_{req.tenant_id}"

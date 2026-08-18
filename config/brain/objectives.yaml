@@ -109,6 +109,7 @@ objectives:
       seed_url: "https://example.com"
       max_pages: 25          # clamped to the starter plan's 20 pages/job
       vertical: general
+      crawler_engine: auto   # auto | fallback | crawlee | crawlee_playwright
     phases:
       - name: Plan
         description: Resolve variables and derive the crawl configuration.
@@ -121,6 +122,7 @@ objectives:
                   plan: ${plan}
                   max_pages: ${max_pages}
                   vertical: ${vertical}
+                  crawler_engine: ${crawler_engine}
                 verify:
                   - kind: config_present
                     target: resolved
@@ -137,9 +139,13 @@ objectives:
                   hints:
                     max_pages: ${max_pages}
                     vertical: ${vertical}
+                    crawler_engine: ${crawler_engine}
+                    allowed_scrapers: ${allowed_scrapers}
                 verify:
                   - kind: nonempty
                     target: urls
+                  - kind: config_present
+                    target: crawler_engine
                   - kind: range
                     target: max_pages
                     min: 1

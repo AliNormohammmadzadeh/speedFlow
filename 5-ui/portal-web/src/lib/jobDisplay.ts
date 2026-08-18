@@ -146,6 +146,24 @@ export function formatIso(iso?: string | null): string {
   }
 }
 
+/** Human label for crawler_engine / runtime engine fields on a job plan. */
+export function crawlerEngineLabel(engine?: string | null): string {
+  switch (engine) {
+    case 'fallback':
+      return 'HTTP fallback'
+    case 'crawlee':
+    case 'beautifulsoup':
+      return 'Crawlee + BeautifulSoup'
+    case 'crawlee_playwright':
+    case 'playwright':
+      return 'Crawlee + Playwright'
+    case 'auto':
+      return 'Auto'
+    default:
+      return engine || '—'
+  }
+}
+
 /** Short human-readable label for page titles (word-safe truncate). */
 export function summarizeRequirement(requirement?: string | null, maxLen = 96): string {
   if (!requirement?.trim()) return 'Scrape job'

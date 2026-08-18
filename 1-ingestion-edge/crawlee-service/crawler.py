@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -14,21 +15,100 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+_AI_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "0-ai-intelligence"))
+if _AI_ROOT not in sys.path:
+    sys.path.insert(0, _AI_ROOT)
+
 try:
-    from crawlee import ConcurrencySettings
-    from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
-    from crawlee.proxy_configuration import ProxyConfiguration
-    from crawlee.storages import RequestQueue
+    from shared.crawler_engine import DEFAULT_ENGINE, normalize_crawler_engine
+except ImportError:
+    DEFAULT_ENGINE = "crawlee"
+
+    def normalize_crawler_engine(source: dict | None, hints: dict | None = None) -> str:
+        source = source or {}
+        raw = source.get("crawler_engine")
+        if raw in ("fallback", "crawlee", "crawlee_playwright"):
+            return raw
+        if source.get("crawler_type") == "playwright":
+            return "crawlee_playwright"
+        return DEFAULT_ENGINE
+
+
+def _import_pypi_crawlee():
+    """Import the PyPI ``crawlee`` package (not ``1-ingestion-edge/scrapers/crawlee``)."""
+    shadow_paths = [
+        p for p in sys.path
+        if p.endswith(f"{os.sep}scrapers") or p.endswith("/scrapers")
+    ]
+    saved = list(sys.path)
+    try:
+        for p in shadow_paths:
+            while p in sys.path:
+                sys.path.remove(p)
+        from crawlee import ConcurrencySettings
+        from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
+        from crawlee.proxy_configuration import ProxyConfiguration
+        from crawlee.storages import RequestQueue
+        return ConcurrencySettings, BeautifulSoupCrawler, BeautifulSoupCrawlingContext, ProxyConfiguration, RequestQueue
+    finally:
+        sys.path[:] = saved
+
+
+try:
+    (
+        ConcurrencySettings,
+        BeautifulSoupCrawler,
+        BeautifulSoupCrawlingContext,
+        ProxyConfiguration,
+        RequestQueue,
+    ) = _import_pypi_crawlee()
     CRAWLEE_AVAILABLE = True
 except ImportError:
     CRAWLEE_AVAILABLE = False
     logger.warning("Crawlee not installed — fallback HTTP crawler will be used")
 
+_saved_paths = list(sys.path)
 try:
+    shadow_paths = [p for p in sys.path if p.endswith(f"{os.sep}scrapers") or p.endswith("/scrapers")]
+    for p in shadow_paths:
+        while p in sys.path:
+            sys.path.remove(p)
     from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
+finally:
+    sys.path[:] = _saved_paths
+
+
+def playwright_browser_ready() -> bool:
+    """True when Playwright Python package and Chromium binary are available."""
+    if not PLAYWRIGHT_AVAILABLE:
+        return False
+    if os.environ.get("SPEEDFLOW_SKIP_PLAYWRIGHT_CHECK") == "1":
+        return True
+    cache = Path.home() / ".cache" / "ms-playwright"
+    if any(cache.glob("chromium-*")):
+        return True
+    # Docker / CI may install browsers outside the default cache path.
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+        return True
+    except Exception as exc:
+        logger.warning("Playwright browser not ready: %s", exc)
+        return False
+
+
+def crawler_capabilities() -> dict[str, bool]:
+    return {
+        "crawlee": CRAWLEE_AVAILABLE,
+        "crawlee_playwright": PLAYWRIGHT_AVAILABLE and playwright_browser_ready(),
+        "fallback": True,
+    }
 
 
 def load_proxy_config() -> dict:
@@ -87,14 +167,58 @@ async def run_crawlee_job(
 ) -> dict[str, Any]:
     """
     Execute a crawl job. Calls on_result for each extracted page/document.
-    Returns job statistics.
+    Returns job statistics including requested and actual engine.
     """
-    if job.get("crawler_type") == "playwright" and PLAYWRIGHT_AVAILABLE:
-        return await _run_playwright_job(job, on_result, on_progress)
+    requested = normalize_crawler_engine(job)
+    caps = crawler_capabilities()
 
-    if not CRAWLEE_AVAILABLE:
-        return await _run_fallback_job(job, on_result, on_progress)
+    async def _finish(stats: dict[str, Any], actual: str) -> dict[str, Any]:
+        actual_key = {
+            "playwright": "crawlee_playwright",
+            "crawlee": "crawlee",
+            "fallback": "fallback",
+        }.get(actual, actual)
+        stats["engine_requested"] = requested
+        stats["engine"] = actual
+        if requested != actual_key:
+            stats["engine_fallback_reason"] = (
+                f"Requested {requested} but runtime used {actual_key}"
+            )
+        return stats
 
+    if requested == "fallback":
+        stats = await _run_fallback_job(job, on_result, on_progress)
+        return await _finish(stats, "fallback")
+
+    if requested == "crawlee_playwright":
+        if caps["crawlee_playwright"]:
+            stats = await _run_playwright_job(job, on_result, on_progress)
+            return await _finish(stats, "playwright")
+        logger.warning(
+            "Job %s requested crawlee_playwright but browser unavailable — falling back",
+            job.get("job_id"),
+        )
+        if caps["crawlee"]:
+            stats = await _run_beautifulsoup_job(job, on_result, on_progress)
+            return await _finish(stats, "crawlee")
+        stats = await _run_fallback_job(job, on_result, on_progress)
+        return await _finish(stats, "fallback")
+
+    # crawlee (BeautifulSoup) — default
+    if caps["crawlee"]:
+        stats = await _run_beautifulsoup_job(job, on_result, on_progress)
+        return await _finish(stats, "crawlee")
+
+    stats = await _run_fallback_job(job, on_result, on_progress)
+    return await _finish(stats, "fallback")
+
+
+async def _run_beautifulsoup_job(
+    job: dict,
+    on_result: Callable[[dict], None],
+    on_progress: Callable[[int, str | None], None] | None = None,
+) -> dict[str, Any]:
+    """Crawlee BeautifulSoup crawler for static/structured sites."""
     proxy_configuration = build_proxy_configuration(job)
     max_concurrency = int(job.get("max_concurrency", 5))
     max_requests = int(job.get("max_pages", 50))

@@ -190,9 +190,27 @@ def build_pipeline_steps(job: dict[str, Any], event_count: int) -> list[dict[str
     raw_status = "done" if pages > 0 or event_count > 0 else ("failed" if crawl_status == "failed" else ("active" if status == "running" else "pending"))
     processed_status = "done" if event_count > 0 else ("failed" if crawl_status == "failed" else ("active" if raw_status == "done" else "pending"))
 
+    config = job.get("config") if isinstance(job.get("config"), dict) else {}
+    if not config and job.get("config"):
+        try:
+            import json as _json
+            parsed = _json.loads(job["config"]) if isinstance(job["config"], str) else job["config"]
+            if isinstance(parsed, dict):
+                config = parsed
+        except Exception:
+            config = {}
+    engine = config.get("crawler_engine") or config.get("crawler_type") or "crawlee"
+    engine_labels = {
+        "fallback": "HTTP fallback crawl",
+        "crawlee": "Crawlee + BeautifulSoup",
+        "crawlee_playwright": "Crawlee + Playwright",
+        "playwright": "Crawlee + Playwright",
+        "beautifulsoup": "Crawlee + BeautifulSoup",
+    }
+    crawl_via = f"Redis queue → {engine_labels.get(str(engine), str(engine))}"
     steps = [
         step("Scrape submitted", "Platform API → orchestrator", "done"),
-        step("Crawlee worker", "Redis queue → HTTP crawl", crawl_status),
+        step("Crawlee worker", crawl_via, crawl_status),
         step("raw_stream", "Kafka Avro publish", raw_status),
         step("Stream processor", "Flink-style aggregation", processed_status if raw_status == "done" else "pending"),
         step("processed_stream", "Results for this job", processed_status),

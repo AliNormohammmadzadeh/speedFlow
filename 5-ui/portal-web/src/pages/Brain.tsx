@@ -25,6 +25,7 @@ export default function Brain() {
   const [report, setReport] = useState<any>(null)
   const [busy, setBusy] = useState<'' | 'plan' | 'execute'>('')
   const [err, setErr] = useState<string | null>(null)
+  const [varOverrides, setVarOverrides] = useState<Record<string, string>>({})
   const { openDetail } = useDetail()
 
   useEffect(() => {
@@ -43,7 +44,12 @@ export default function Brain() {
     if (!selected) return
     setBusy('plan'); setErr(null); setReport(null)
     try {
-      setPlan(await api.brainPlan({ objective: selected }))
+      setPlan(await api.brainPlan({
+        objective: selected,
+        context: varOverrides.crawler_engine || varOverrides.plan
+          ? { variables: varOverrides }
+          : undefined,
+      }))
     } catch (e) {
       setErr(String(e))
     } finally {
@@ -55,7 +61,12 @@ export default function Brain() {
     if (!selected) return
     setBusy('execute'); setErr(null)
     try {
-      const res = await api.brainExecute({ objective: selected })
+      const res = await api.brainExecute({
+        objective: selected,
+        context: varOverrides.crawler_engine || varOverrides.plan
+          ? { variables: varOverrides }
+          : undefined,
+      })
       setPlan(res.plan)
       setReport(res.report)
     } catch (e) {
@@ -125,6 +136,35 @@ export default function Brain() {
 
           <div className="mt-4 rounded-xl bg-black/30 p-4">
             <p className="mb-2 text-xs uppercase tracking-wide text-white/40">Resolved variables / configs</p>
+            {selected === 'launch_scrape_pipeline' && (
+              <div className="mb-3 flex flex-wrap items-end gap-3">
+                <label className="text-xs text-white/50">
+                  Crawler engine
+                  <select
+                    className="input-field mt-1 min-w-[14rem]"
+                    value={varOverrides.crawler_engine ?? current.variables.crawler_engine ?? 'auto'}
+                    onChange={e => setVarOverrides(v => ({ ...v, crawler_engine: e.target.value }))}
+                  >
+                    <option value="auto">Auto — infer from requirement</option>
+                    <option value="fallback">HTTP fallback</option>
+                    <option value="crawlee">Crawlee + BeautifulSoup</option>
+                    <option value="crawlee_playwright">Crawlee + Playwright (JS)</option>
+                  </select>
+                </label>
+                <label className="text-xs text-white/50">
+                  Plan tier
+                  <select
+                    className="input-field mt-1"
+                    value={varOverrides.plan ?? current.variables.plan ?? 'starter'}
+                    onChange={e => setVarOverrides(v => ({ ...v, plan: e.target.value }))}
+                  >
+                    <option value="starter">Starter</option>
+                    <option value="pro">Pro</option>
+                    <option value="enterprise">Enterprise</option>
+                  </select>
+                </label>
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">
               {Object.entries((plan?.variables) || current.variables || {}).map(([k, v]) => (
                 <span key={k} className="rounded-lg bg-white/5 px-2.5 py-1 text-xs">

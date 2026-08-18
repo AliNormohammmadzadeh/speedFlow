@@ -99,6 +99,10 @@ class HierarchicalPlanner:
                     int(variables["max_concurrency"]),
                     int(limits.get("max_concurrency", variables["max_concurrency"])),
                 )
+        features = self._plan_features(variables.get("plan"))
+        if features:
+            variables["plan_features"] = features
+            variables["allowed_scrapers"] = features.get("scrapers", [])
         return variables
 
     def _plan_limits(self, plan: str | None) -> dict[str, Any]:
@@ -106,6 +110,12 @@ class HierarchicalPlanner:
             return {}
         plans = (self._loader("subscriptions/plans.yaml") or {}).get("plans", {})
         return dict(plans.get(plan, {}).get("limits", {}))
+
+    def _plan_features(self, plan: str | None) -> dict[str, Any]:
+        if not plan:
+            return {}
+        plans = (self._loader("subscriptions/plans.yaml") or {}).get("plans", {})
+        return dict(plans.get(plan, {}).get("features", {}))
 
     # ------------------------------------------------------------------ #
     async def build_plan(

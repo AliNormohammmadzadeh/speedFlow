@@ -7,12 +7,14 @@ from typing import Any
 from urllib.parse import urlparse
 
 from shared.utils import AgentState, llm_complete
+from shared.crawler_engine import apply_engine_to_plan
 
 logger = logging.getLogger(__name__)
 
 SCRAPE_PLANNER_SYSTEM = """You are a web scraping architect for SpeedFlow platform.
 Given a user's data requirement, output ONLY valid JSON with these fields:
 {
+  "crawler_engine": "auto" | "fallback" | "crawlee" | "crawlee_playwright",
   "crawler_type": "beautifulsoup" | "playwright",
   "urls": ["https://..."],
   "selectors": {"field_name": "css_selector"},
@@ -31,7 +33,8 @@ Given a user's data requirement, output ONLY valid JSON with these fields:
   "interval_seconds": 300,
   "rate_limit_per_second": 2
 }
-Choose playwright for JS-heavy SPAs. Use proxy for anti-bot sites. Be conservative with max_pages."""
+Choose crawlee_playwright for JS-heavy SPAs (React/Vue/dynamic). Use crawlee for static HTML.
+Use fallback only for simple single-page fetches. Use proxy for anti-bot sites. Be conservative with max_pages."""
 
 
 class ScrapePlannerAgent:
@@ -57,7 +60,14 @@ Seed URL if any: {hints.get('url', 'none')}
         plan["requirement"] = requirement
         plan["source_id"] = plan.get("source_id") or self._slugify(requirement[:40])
         plan["type"] = "crawlee"
-        logger.info("Scrape plan for tenant=%s: urls=%s proxy=%s", tenant_id, plan.get("urls"), plan.get("use_proxy"))
+        apply_engine_to_plan(plan, requirement, hints)
+        logger.info(
+            "Scrape plan for tenant=%s: urls=%s engine=%s proxy=%s",
+            tenant_id,
+            plan.get("urls"),
+            plan.get("crawler_engine"),
+            plan.get("use_proxy"),
+        )
         return plan
 
     def _parse_plan(self, llm_response: str, requirement: str, hints: dict) -> dict:
@@ -78,6 +88,7 @@ Seed URL if any: {hints.get('url', 'none')}
         if not urls:
             urls = self._extract_urls_from_text(requirement)
 
+        plan.setdefault("crawler_engine", hints.get("crawler_engine", "auto"))
         plan.setdefault("crawler_type", "beautifulsoup")
         plan.setdefault("max_pages", min(int(hints.get("max_pages", 50)), 500))
         plan.setdefault("max_depth", 1)
@@ -110,6 +121,7 @@ Seed URL if any: {hints.get('url', 'none')}
             selectors["title"] = "h1, .title, [class*='title']"
 
         return {
+            "crawler_engine": "crawlee_playwright" if use_playwright else "crawlee",
             "crawler_type": "playwright" if use_playwright else "beautifulsoup",
             "urls": urls or ["https://httpbin.org/html"],
             "selectors": selectors,

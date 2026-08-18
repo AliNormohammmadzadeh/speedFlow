@@ -27,8 +27,10 @@ re-run dependency installs unless something is missing.
   The update script installs `confluent-kafka[avro,schemaregistry]` + `authlib`. If pipeline workers
   crash with `ModuleNotFoundError: authlib`/`attrs`/`fastavro`, reinstall those.
 - **Host worker uses a fallback crawler:** the crawlee worker logs `Crawlee not installed — fallback
-  HTTP crawler will be used` even when `crawlee` is importable (Playwright browsers are not installed
-  on the host). This is expected; the scrape→Kafka pipeline still works for static pages.
+  HTTP crawler will be used` when Crawlee is not pip-installed. After
+  `bash scripts/install-local-deps.sh`, host workers use **Crawlee + BeautifulSoup** by default;
+  set `crawler_engine: crawlee_playwright` (Pro+) for JS sites. That script also runs
+  `playwright install chromium` — without Chromium, Playwright jobs fall back to Crawlee/HTTP.
 - **Plan routing:** `starter` tenants publish to `raw_stream` (which the stream processor consumes →
   `processed_stream`). `pro`/`enterprise` tenants get a **dedicated** topic (`raw_stream_<tenant>`),
   which the default host stream processor does NOT consume — use a `starter` tenant to see events
