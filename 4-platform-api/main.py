@@ -174,6 +174,10 @@ class ScrapeRequest(BaseModel):
         default=None,
         description="Crawl engine: auto, fallback, crawlee, or crawlee_playwright",
     )
+    use_proxy: bool | None = Field(
+        default=None,
+        description="Force proxy on/off; requires Pro or Enterprise plan when true",
+    )
 
 
 class ScrapeJobResponse(BaseModel):
@@ -655,6 +659,7 @@ async def request_scrape(
                     "vertical": req.vertical,
                     "max_pages": req.max_pages or limits.get("max_pages_per_job", 20),
                     "crawler_engine": req.crawler_engine or "auto",
+                    "use_proxy": req.use_proxy,
                 },
                 "plan_limits": limits,
                 "plan_features": features,

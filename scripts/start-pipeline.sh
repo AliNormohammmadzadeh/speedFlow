@@ -4,6 +4,28 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p /tmp/speedflow-pids
 
+if [ -f "$ROOT/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/.env"
+  set +a
+fi
+
+# Path A (host workers): map docker-compose service names to localhost ports.
+case "${KAFKA_BOOTSTRAP_SERVERS:-}" in
+  kafka:*) export KAFKA_BOOTSTRAP_SERVERS=localhost:29092 ;;
+esac
+case "${SCHEMA_REGISTRY_URL:-}" in
+  http://schema-registry:*) export SCHEMA_REGISTRY_URL=http://127.0.0.1:8081 ;;
+esac
+case "${REDIS_URL:-}" in
+  redis://redis:*) export REDIS_URL=redis://127.0.0.1:6380 ;;
+esac
+if [ "${POSTGRES_HOST:-}" = "postgres" ]; then
+  export POSTGRES_HOST=127.0.0.1
+  export POSTGRES_PORT=5433
+fi
+
 export DOCKER_HOST="${DOCKER_HOST:-unix:///var/run/docker.sock}"
 export KAFKA_BOOTSTRAP_SERVERS="${KAFKA_BOOTSTRAP_SERVERS:-localhost:29092}"
 export SCHEMA_REGISTRY_URL="${SCHEMA_REGISTRY_URL:-http://127.0.0.1:8081}"
@@ -41,7 +63,10 @@ start_worker crawlee-worker \
    KAFKA_BOOTSTRAP_SERVERS='$KAFKA_BOOTSTRAP_SERVERS' SCHEMA_REGISTRY_URL='$SCHEMA_REGISTRY_URL' \
    REDIS_URL='$REDIS_URL' POSTGRES_HOST='$POSTGRES_HOST' POSTGRES_PORT='$POSTGRES_PORT' \
    POSTGRES_USER='$POSTGRES_USER' POSTGRES_PASSWORD='$POSTGRES_PASSWORD' POSTGRES_DB='$POSTGRES_DB' \
-   USE_AVRO='$USE_AVRO' exec python3 worker.py"
+   USE_AVRO='$USE_AVRO' CRAWLEE_PROXY_URL='${CRAWLEE_PROXY_URL:-}' \
+   NOVADA_PROXY_HOST='${NOVADA_PROXY_HOST:-}' NOVADA_PROXY_PORT='${NOVADA_PROXY_PORT:-}' \
+   NOVADA_PROXY_USER='${NOVADA_PROXY_USER:-}' NOVADA_PROXY_PASSWORD='${NOVADA_PROXY_PASSWORD:-}' \
+   exec python3 worker.py"
 
 echo "==> Starting stream processor..."
 start_worker stream-processor \

@@ -9,9 +9,7 @@ tiered_proxy_urls:
     - "${CRAWLEE_PROXY_URL:-}"
   premium:
     - "${CRAWLEE_PROXY_URL:-}"
-    # Add paid proxy endpoints for production:
-    # - "http://user:pass@premium-proxy-1:8080"
-    # - "http://user:pass@premium-proxy-2:8080"
+    # Novada residential — set CRAWLEE_PROXY_URL in local .env (never commit credentials)
 
 defaults:
   use_session_pool: true
