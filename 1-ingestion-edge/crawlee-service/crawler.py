@@ -9,7 +9,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import yaml
 
@@ -19,19 +19,41 @@ _AI_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "
 if _AI_ROOT not in sys.path:
     sys.path.insert(0, _AI_ROOT)
 
-try:
-    from shared.crawler_engine import DEFAULT_ENGINE, normalize_crawler_engine
-except ImportError:
-    DEFAULT_ENGINE = "crawlee"
+from extraction.engine import (
+    capture_satisfied,
+    finalize_page_payload,
+    is_bot_block,
+    network_capture_config,
+    playwright_crawler_extras,
+    should_capture_url,
+    wait_config_for_url,
+)
 
-    def normalize_crawler_engine(source: dict | None, hints: dict | None = None) -> str:
-        source = source or {}
-        raw = source.get("crawler_engine")
-        if raw in ("fallback", "crawlee", "crawlee_playwright"):
-            return raw
-        if source.get("crawler_type") == "playwright":
-            return "crawlee_playwright"
-        return DEFAULT_ENGINE
+DEFAULT_ENGINE = "crawlee"
+
+
+def normalize_crawler_engine(source: dict | None, hints: dict | None = None) -> str:
+    source = source or {}
+    raw = source.get("crawler_engine")
+    if raw in ("fallback", "crawlee", "crawlee_playwright"):
+        return raw
+    if source.get("crawler_type") == "playwright":
+        return "crawlee_playwright"
+    return DEFAULT_ENGINE
+
+
+try:
+    import importlib.util
+
+    _engine_path = os.path.join(_AI_ROOT, "shared", "crawler_engine.py")
+    _spec = importlib.util.spec_from_file_location("ai_crawler_engine", _engine_path)
+    if _spec and _spec.loader:
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        DEFAULT_ENGINE = _mod.DEFAULT_ENGINE
+        normalize_crawler_engine = _mod.normalize_crawler_engine
+except Exception:
+    pass
 
 
 def _import_pypi_crawlee():
@@ -111,6 +133,26 @@ def crawler_capabilities() -> dict[str, bool]:
     }
 
 
+def resolve_proxy_url() -> str | None:
+    """Resolve proxy URL from CRAWLEE_PROXY_URL or Novada-style env parts."""
+    direct = os.environ.get("CRAWLEE_PROXY_URL", "").strip()
+    if direct:
+        return direct
+    host = os.environ.get("NOVADA_PROXY_HOST", "").strip()
+    port = os.environ.get("NOVADA_PROXY_PORT", "").strip()
+    user = os.environ.get("NOVADA_PROXY_USER", "").strip()
+    password = os.environ.get("NOVADA_PROXY_PASSWORD", "").strip()
+    if host and port and user and password:
+        return f"http://{quote(user, safe='')}:{quote(password, safe='')}@{host}:{port}"
+    return None
+
+
+_CHROME_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
+
+
 def load_proxy_config() -> dict:
     path = Path(__file__).parent / "config" / "proxies.yaml"
     if not path.exists():
@@ -133,7 +175,7 @@ def build_proxy_configuration(job: dict) -> Any | None:
             return ProxyConfiguration(tiered_proxy_urls=[urls])
 
     flat = proxy_cfg.get("proxy_urls", [])
-    env_proxy = os.environ.get("CRAWLEE_PROXY_URL")
+    env_proxy = resolve_proxy_url()
     if env_proxy:
         flat = flat + [env_proxy]
     flat = [u for u in flat if u and not str(u).startswith("${")]
@@ -264,20 +306,19 @@ async def _run_beautifulsoup_job(
         url = context.request.url
 
         if job.get("extract_mode") == "full_text":
-            payload = {
-                "title": soup.title.string.strip() if soup.title and soup.title.string else None,
-                "text": soup.get_text(separator=" ", strip=True)[:50000],
-                "url": url,
-            }
+            title = soup.title.string.strip() if soup.title and soup.title.string else ""
+            text = soup.get_text(separator=" ", strip=True)
+            payload = finalize_page_payload(job, url, title=title, text=text)
         elif selectors:
-            payload = _extract_with_selectors(soup, selectors)
-            payload["url"] = url
+            dom_fields = _extract_with_selectors(soup, selectors)
+            title = soup.title.string.strip() if soup.title and soup.title.string else ""
+            payload = finalize_page_payload(job, url, title=title, text="", dom_fields=dom_fields)
         else:
-            payload = {
-                "title": soup.title.string.strip() if soup.title and soup.title.string else None,
-                "url": url,
-                "headings": [h.get_text(strip=True) for h in soup.select("h1,h2,h3")[:20]],
-            }
+            title = soup.title.string.strip() if soup.title and soup.title.string else ""
+            headings = [h.get_text(strip=True) for h in soup.select("h1,h2,h3")[:20]]
+            payload = finalize_page_payload(
+                job, url, title=title, text=" ".join(headings), dom_fields={"headings": headings},
+            )
 
         if context.proxy_info:
             payload["_proxy"] = context.proxy_info.url
@@ -322,33 +363,94 @@ async def _run_playwright_job(
     results_count = 0
 
     proxy_configuration = build_proxy_configuration(job)
+    api_responses: list[tuple[str, str]] = []
+    net_cfg = network_capture_config(job)
+    capture_enabled = bool(net_cfg) or job.get("extraction_strategy") == "network_api"
     crawler_kwargs: dict[str, Any] = {
         "max_requests_per_crawl": max_requests,
         "headless": True,
+        "browser_new_context_options": {
+            "user_agent": _CHROME_UA,
+            "viewport": {"width": 1440, "height": 900},
+            "locale": "en-US",
+        },
+        "goto_options": {"wait_until": "domcontentloaded"},
     }
     if proxy_configuration:
         crawler_kwargs["proxy_configuration"] = proxy_configuration
+    crawler_kwargs.update(playwright_crawler_extras(job))
 
     request_queue = await RequestQueue.open(name=f"job-{job.get('job_id', uuid.uuid4().hex)}-{uuid.uuid4().hex[:8]}")
     crawler_kwargs["request_manager"] = request_queue
 
     crawler = PlaywrightCrawler(**crawler_kwargs)
 
+    @crawler.pre_navigation_hook
+    async def capture_api_responses(ctx: PlaywrightCrawlingContext) -> None:
+        if not capture_enabled:
+            return
+        page = ctx.page
+        cfg = net_cfg or {"url_include": ["/api/"]}
+
+        async def on_response(response) -> None:
+            req_url = response.url
+            if not should_capture_url(req_url, cfg):
+                return
+            try:
+                body = await response.text()
+            except Exception:
+                return
+            api_responses.append((req_url, body))
+
+        page.on("response", on_response)
+
     @crawler.router.default_handler
     async def handler(context: PlaywrightCrawlingContext) -> None:
         nonlocal results_count
         page = context.page
         url = context.request.url
-        title = await page.title()
+        wait_cfg = wait_config_for_url(url, job) if capture_enabled else {"wait_ms": 3000, "retries": 1, "min_body_chars": 200}
+        max_attempts = wait_cfg.get("retries", 1)
+        title = ""
+        body = ""
+
+        for attempt in range(1, max_attempts + 1):
+            if attempt > 1:
+                api_responses.clear()
+                await page.reload(wait_until="domcontentloaded")
+            await page.wait_for_timeout(wait_cfg.get("wait_ms", 3000))
+            title = await page.title()
+            body = await page.inner_text("body")
+            if is_bot_block(title, body):
+                logger.warning(
+                    "Playwright attempt %s/%s bot-block for %s (title=%r)",
+                    attempt, max_attempts, url, title[:80],
+                )
+                continue
+            if capture_enabled and wait_cfg.get("wait_for_contains"):
+                if capture_satisfied(url, api_responses, wait_cfg):
+                    break
+            elif len(body.strip()) >= wait_cfg.get("min_body_chars", 200):
+                break
+
+        dom_fields = None
         if selectors:
-            payload = {}
+            dom_fields = {}
             for key, css in selectors.items():
                 els = await page.query_selector_all(css)
-                payload[key] = [await el.inner_text() for el in els[:30]]
-        else:
-            body = await page.inner_text("body")
-            payload = {"title": title, "text": body[:50000], "url": url}
-        payload["url"] = url
+                dom_fields[key] = [await el.inner_text() for el in els[:30]]
+
+        payload = finalize_page_payload(
+            job, url, title=title, text=body, dom_fields=dom_fields, api_responses=api_responses,
+        )
+
+        extracted = payload.get("extracted") or {}
+        if job.get("extraction_strategy") == "network_api":
+            if extracted.get("stats", {}).get("records_count", 0) == 0 and is_bot_block(title, body):
+                raise RuntimeError(
+                    "Network API extraction got no records — site may be blocked; rotate proxy or retry"
+                )
+
         on_result({"url": url, "payload": payload, "content_type": "text/html"})
         results_count += 1
         if on_progress:
@@ -373,7 +475,7 @@ async def _run_fallback_job(
     urls = job.get("urls") or ([job["url"]] if job.get("url") else [])
     selectors = job.get("selectors", {})
     count = 0
-    proxy = os.environ.get("CRAWLEE_PROXY_URL")
+    proxy = resolve_proxy_url()
     client_kwargs: dict = {"timeout": 30, "follow_redirects": True}
     if proxy:
         client_kwargs["proxy"] = proxy
@@ -384,11 +486,13 @@ async def _run_fallback_job(
                 resp = await client.get(url, headers={"User-Agent": "SpeedFlow-Crawlee/1.0"})
                 resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "lxml")
+                title = soup.title.string if soup.title else ""
                 if selectors:
-                    payload = _extract_with_selectors(soup, selectors)
+                    dom_fields = _extract_with_selectors(soup, selectors)
+                    payload = finalize_page_payload(job, url, title=title, text="", dom_fields=dom_fields)
                 else:
-                    payload = {"title": soup.title.string if soup.title else None}
-                payload["url"] = url
+                    text = soup.get_text(separator=" ", strip=True)
+                    payload = finalize_page_payload(job, url, title=title, text=text)
                 on_result({"url": url, "payload": payload, "content_type": resp.headers.get("content-type", "")})
                 count += 1
                 if on_progress:
@@ -404,7 +508,7 @@ async def fetch_document(url: str, job: dict, on_result: Callable[[dict], None])
     """Fetch PDF or other documents (non-HTML)."""
     import httpx
 
-    proxy = os.environ.get("CRAWLEE_PROXY_URL") if job.get("use_proxy") else None
+    proxy = resolve_proxy_url() if job.get("use_proxy") else None
     async with httpx.AsyncClient(proxy=proxy, timeout=60, follow_redirects=True) as client:
         resp = await client.get(url)
         resp.raise_for_status()

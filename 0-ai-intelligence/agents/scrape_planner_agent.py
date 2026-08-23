@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from shared.utils import AgentState, llm_complete
 from shared.crawler_engine import apply_engine_to_plan
+from shared.extraction import apply_extraction_profile
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +16,12 @@ SCRAPE_PLANNER_SYSTEM = """You are a web scraping architect for SpeedFlow platfo
 Given a user's data requirement, output ONLY valid JSON with these fields:
 {
   "crawler_engine": "auto" | "fallback" | "crawlee" | "crawlee_playwright",
-  "crawler_type": "beautifulsoup" | "playwright",
-  "urls": ["https://..."],
+  "extraction_strategy": "full_text" | "dom_selectors" | "network_api",
+  "extraction_profile": "optional profile id from config or null for auto-match",
   "selectors": {"field_name": "css_selector"},
+  "network_capture": {"url_include": ["/api/"], "wait_ms": 12000, "retries": 4} or null,
+  "json_rules": [] or null,
+  "urls": ["https://..."],
   "link_selector": "css for pagination/links or null",
   "max_pages": 10-500,
   "max_depth": 0-3,
@@ -26,15 +30,18 @@ Given a user's data requirement, output ONLY valid JSON with these fields:
   "proxy_tier": "standard" | "premium",
   "use_session_pool": true,
   "same_domain_only": true,
-  "extract_mode": "selectors" | "full_text",
+  "extract_mode": "selectors" | "full_text" | "structured",
   "document_urls": [],
   "event_type": "descriptive_snake_case",
-  "vertical": "gaming_esports|financial_markets|accommodation_travel|general",
-  "interval_seconds": 300,
-  "rate_limit_per_second": 2
+  "vertical": "gaming_esports|financial_markets|accommodation_travel|general"
 }
-Choose crawlee_playwright for JS-heavy SPAs (React/Vue/dynamic). Use crawlee for static HTML.
-Use fallback only for simple single-page fetches. Use proxy for anti-bot sites. Be conservative with max_pages."""
+Decision rules:
+- full_text: articles, page content, documents
+- dom_selectors: lists, titles, prices, quotes, tables in HTML
+- network_api: JS SPAs that load odds/prices/markets via XHR/JSON APIs
+- crawlee_playwright for network_api or JS-heavy sites; crawlee for static HTML; fallback for single simple pages
+- use_proxy for cloudflare, anti-bot, rate limits, or geo-blocked betting/market sites
+Be conservative with max_pages. Do NOT hardcode site-specific logic — pick strategy from requirement shape."""
 
 
 class ScrapePlannerAgent:
@@ -60,12 +67,15 @@ Seed URL if any: {hints.get('url', 'none')}
         plan["requirement"] = requirement
         plan["source_id"] = plan.get("source_id") or self._slugify(requirement[:40])
         plan["type"] = "crawlee"
-        apply_engine_to_plan(plan, requirement, hints)
+        apply_extraction_profile(plan, requirement, hints)
+        apply_engine_to_plan(plan, requirement, {**hints, "extraction_strategy": plan.get("extraction_strategy")})
         logger.info(
-            "Scrape plan for tenant=%s: urls=%s engine=%s proxy=%s",
+            "Scrape plan for tenant=%s: urls=%s engine=%s strategy=%s profile=%s proxy=%s",
             tenant_id,
             plan.get("urls"),
             plan.get("crawler_engine"),
+            plan.get("extraction_strategy"),
+            plan.get("extraction_profile"),
             plan.get("use_proxy"),
         )
         return plan
@@ -93,12 +103,13 @@ Seed URL if any: {hints.get('url', 'none')}
         plan.setdefault("max_pages", min(int(hints.get("max_pages", 50)), 500))
         plan.setdefault("max_depth", 1)
         plan.setdefault("max_concurrency", 5)
-        plan.setdefault("use_proxy", self._needs_proxy(requirement))
+        plan.setdefault("use_proxy", self._needs_proxy(requirement, hints))
         plan.setdefault("proxy_tier", "premium" if plan["use_proxy"] else "standard")
         plan.setdefault("use_session_pool", True)
         plan.setdefault("same_domain_only", True)
         plan.setdefault("extract_mode", "selectors" if plan.get("selectors") else "full_text")
         plan.setdefault("selectors", plan.get("selectors") or {})
+        plan.setdefault("extraction_strategy", plan.get("extraction_strategy") or plan["extract_mode"])
         plan.setdefault("event_type", "user_scrape")
         plan.setdefault("vertical", hints.get("vertical", "general"))
         plan["urls"] = urls
@@ -110,8 +121,10 @@ Seed URL if any: {hints.get('url', 'none')}
         if hints.get("url"):
             urls = [hints["url"]]
 
-        use_playwright = any(k in req_lower for k in ["javascript", "react", "spa", "dynamic", "rendered"])
-        use_proxy = self._needs_proxy(requirement)
+        use_proxy = self._needs_proxy(requirement, hints)
+        use_playwright = any(k in req_lower for k in ["javascript", "react", "spa", "dynamic", "rendered", "api data"])
+        if any(k in req_lower for k in ["odds", "market", "betting", "live score", "sportsbook"]):
+            use_playwright = True
         extract_full = any(k in req_lower for k in ["document", "article", "full text", "pdf"])
 
         selectors = {}
@@ -123,6 +136,7 @@ Seed URL if any: {hints.get('url', 'none')}
         return {
             "crawler_engine": "crawlee_playwright" if use_playwright else "crawlee",
             "crawler_type": "playwright" if use_playwright else "beautifulsoup",
+            "extraction_strategy": "network_api" if use_playwright and use_proxy else ("full_text" if extract_full else "dom_selectors"),
             "urls": urls or ["https://httpbin.org/html"],
             "selectors": selectors,
             "link_selector": "a[href]" if any(k in req_lower for k in ["crawl", "all pages", "follow links"]) else None,
@@ -139,9 +153,18 @@ Seed URL if any: {hints.get('url', 'none')}
             "vertical": hints.get("vertical", "general"),
         }
 
-    def _needs_proxy(self, text: str) -> bool:
-        keywords = ["blocked", "cloudflare", "anti-bot", "many requests", "scale", "rate limit", "proxy"]
-        return any(k in text.lower() for k in keywords)
+    def _needs_proxy(self, text: str, hints: dict | None = None) -> bool:
+        hints = hints or {}
+        if hints.get("use_proxy") is True:
+            return True
+        if hints.get("use_proxy") is False:
+            return False
+        blob = " ".join([text, hints.get("url", "")]).lower()
+        keywords = [
+            "blocked", "cloudflare", "anti-bot", "many requests", "scale",
+            "rate limit", "proxy", "sportsbook", "betting", "geo-block",
+        ]
+        return any(k in blob for k in keywords)
 
     def _extract_urls_from_text(self, text: str) -> list[str]:
         return re.findall(r"https?://[^\s\)\]\"']+", text)

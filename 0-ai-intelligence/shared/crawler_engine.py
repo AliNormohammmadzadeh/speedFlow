@@ -38,8 +38,13 @@ def normalize_crawler_engine(source: dict[str, Any] | None, hints: dict[str, Any
     return DEFAULT_ENGINE
 
 
-def infer_engine_from_requirement(requirement: str) -> str:
+def infer_engine_from_requirement(requirement: str, hints: dict[str, Any] | None = None) -> str:
     """Rule-based engine pick when mode is auto."""
+    hints = hints or {}
+    strategy = hints.get("extraction_strategy") or hints.get("extract_mode")
+    if strategy == "network_api":
+        return "crawlee_playwright"
+
     req = requirement.lower()
     js_markers = (
         "javascript",
@@ -89,7 +94,7 @@ def apply_engine_to_plan(
     hints = hints or {}
     mode = hints.get("crawler_engine") or plan.get("crawler_engine") or "auto"
     if mode == "auto":
-        engine = infer_engine_from_requirement(requirement)
+        engine = infer_engine_from_requirement(requirement, hints)
     else:
         engine = normalize_crawler_engine(plan, hints)
 

@@ -1,0 +1,105 @@
+# Declarative extraction profiles — matched by URL/requirement, not hardcoded per site.
+# Planner and crawler both consume these via shared/extraction.py.
+
+version: "1.0"
+
+profiles:
+  full_text:
+    description: Capture page title and visible text
+    match:
+      requirement_keywords: [full text, article body, page content, document]
+    defaults:
+      extraction_strategy: full_text
+      extract_mode: full_text
+      crawler_engine: auto
+
+  dom_selectors:
+    description: CSS selector fields from HTML
+    match:
+      requirement_keywords: [title, heading, price, quote, author, score, listing]
+    defaults:
+      extraction_strategy: dom_selectors
+      extract_mode: selectors
+      crawler_engine: auto
+
+  quotes_listing:
+    description: Quote + author list pages
+    match:
+      host_patterns: [quotes.toscrape.com, books.toscrape.com]
+    defaults:
+      extraction_strategy: dom_selectors
+      extract_mode: selectors
+      crawler_engine: crawlee
+      selectors:
+        quote: ".quote .text"
+        author: ".quote .author"
+
+  books_listing:
+    description: Book title + price listing pages
+    match:
+      host_patterns: [books.toscrape.com]
+    defaults:
+      extraction_strategy: dom_selectors
+      extract_mode: selectors
+      crawler_engine: crawlee
+      selectors:
+        title: "h3 a"
+        price: ".price_color"
+
+  news_listing:
+    description: News aggregator front pages
+    match:
+      host_patterns: [news.ycombinator.com]
+    defaults:
+      extraction_strategy: dom_selectors
+      extract_mode: selectors
+      crawler_engine: crawlee
+      selectors:
+        title: ".titleline"
+        score: ".score"
+        site: ".sitestr"
+
+  spa_network_api:
+    description: JS apps that load structured data via JSON APIs
+    match:
+      requirement_keywords: [odds, market, betting, bet, live score, sportsbook, wager, esports]
+    defaults:
+      extraction_strategy: network_api
+      extract_mode: structured
+      crawler_engine: crawlee_playwright
+      use_proxy: true
+      proxy_tier: premium
+    network_capture:
+      url_include: ["/api/"]
+      wait_ms: 12000
+      retries: 4
+      min_body_chars: 200
+      ignore_http_status: [403]
+      max_request_retries: 8
+      url_id_from_path: last_numeric
+      wait_for_url_contains: ["/api/markets/"]
+    json_rules:
+      - id: market_selections
+        url_match: "*/api/markets/*"
+        records_path: data
+        map:
+          market: name
+        expand:
+          array: selections
+          fields:
+            selection: name
+            odds: odds
+            line: handicap|total
+            side: type
+      - id: match_entity
+        url_match: "*/api/matches/*"
+        store_entity: match
+        path: data
+        pick:
+          - name
+          - isLive
+          - startTime
+          - teams
+          - score
+          - competition
+          - market

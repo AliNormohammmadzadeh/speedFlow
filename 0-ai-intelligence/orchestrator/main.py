@@ -464,7 +464,12 @@ async def plan_and_queue_scrape(req: ScrapePlanRequest):
     apply_engine_to_plan(
         plan,
         req.requirement,
-        {**hints, "allowed_scrapers": allowed, "plan_features": features},
+        {
+            **hints,
+            "allowed_scrapers": allowed,
+            "plan_features": features,
+            "extraction_strategy": plan.get("extraction_strategy"),
+        },
     )
 
     if features.get("dedicated_kafka_topic") and req.tenant_id:
