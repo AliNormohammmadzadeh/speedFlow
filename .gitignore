@@ -20,4 +20,6 @@ build/
 .terraform.lock.hcl
 gitops-output/
 data/
+# Crawlee local runtime state (regenerated per crawl session)
+1-ingestion-edge/crawlee-service/storage/
 *.jar
