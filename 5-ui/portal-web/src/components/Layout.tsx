@@ -113,7 +113,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
 
-          <nav className="flex-1 space-y-1.5 overflow-y-auto p-3">
+          <nav className="sidebar-nav-scroll flex-1 space-y-1.5 p-3">
             {NAV.map(({ to, icon: Icon, label, desc }) => (
               <NavLink
                 key={to}

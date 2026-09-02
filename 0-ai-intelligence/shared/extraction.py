@@ -53,7 +53,7 @@ def match_extraction_profile(
     if hints.get("url"):
         urls = [hints["url"]] + [u for u in urls if u != hints["url"]]
 
-    blob = " ".join([requirement, hints.get("url", ""), " ".join(urls)])
+    blob = " ".join([requirement, hints.get("url") or "", " ".join(urls)])
     hosts = [_host_from_url(u) for u in urls if u]
 
     host_matches: list[tuple[int, str]] = []

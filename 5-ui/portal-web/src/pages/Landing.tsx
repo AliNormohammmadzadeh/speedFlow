@@ -167,6 +167,197 @@ const VERTICALS = [
   { icon: Building2, title: 'Accommodation', desc: 'Listings ingestion powering a search & aggregation API for travel products.', accent: 'from-cyan-500/20 to-blue-500/10' },
 ]
 
+/** Investor market sizing — aligned with docs/monetization-for-investors.md */
+const MARKET_LAYERS = [
+  {
+    abbrev: 'TAM',
+    name: 'Total addressable market',
+    headline: '$100B+',
+    desc: 'Global data platforms, market data & analytics.',
+    accent: 'from-cyan-500 to-blue-500',
+    stroke: '#22d3ee',
+    fill: 'rgba(34, 211, 238, 0.1)',
+    activeFill: 'rgba(34, 211, 238, 0.32)',
+    radius: 88,
+    ringHover: 'hover:border-cyan-500/40 hover:bg-cyan-500/[0.08] hover:shadow-cyan-500/15',
+    activeRing: 'border-cyan-500/45 bg-cyan-500/[0.12] shadow-md shadow-cyan-500/20 -translate-y-0.5',
+    badgeActive: 'border-cyan-400/70 shadow-cyan-500/25 scale-110',
+  },
+  {
+    abbrev: 'TOM',
+    name: 'Total obtainable market',
+    headline: '$8–15B',
+    desc: 'Teams shipping monetizable web & API datasets.',
+    accent: 'from-violet-500 to-fuchsia-500',
+    stroke: '#a78bfa',
+    fill: 'rgba(167, 139, 250, 0.16)',
+    activeFill: 'rgba(167, 139, 250, 0.34)',
+    radius: 58,
+    ringHover: 'hover:border-violet-500/40 hover:bg-violet-500/[0.08] hover:shadow-violet-500/15',
+    activeRing: 'border-violet-500/45 bg-violet-500/[0.12] shadow-md shadow-violet-500/20 -translate-y-0.5',
+    badgeActive: 'border-violet-400/70 shadow-violet-500/25 scale-110',
+  },
+  {
+    abbrev: 'SOM',
+    name: 'Serviceable obtainable market',
+    headline: '$50–150M',
+    desc: 'Fintech & gaming · Year 3 wedge.',
+    accent: 'from-pink-500 to-rose-500',
+    stroke: '#f472b6',
+    fill: 'rgba(244, 114, 182, 0.22)',
+    activeFill: 'rgba(244, 114, 182, 0.4)',
+    radius: 28,
+    ringHover: 'hover:border-pink-500/40 hover:bg-pink-500/[0.08] hover:shadow-pink-500/15',
+    activeRing: 'border-pink-500/45 bg-pink-500/[0.12] shadow-md shadow-pink-500/20 -translate-y-0.5',
+    badgeActive: 'border-pink-400/70 shadow-pink-500/25 scale-110',
+  },
+] as const
+
+type MarketAbbrev = (typeof MARKET_LAYERS)[number]['abbrev']
+
+const MARKET_CX = 100
+const MARKET_CY = 100
+
+function marketLayerAt(svg: SVGSVGElement, clientX: number, clientY: number): MarketAbbrev | null {
+  const pt = svg.createSVGPoint()
+  pt.x = clientX
+  pt.y = clientY
+  const ctm = svg.getScreenCTM()
+  if (!ctm) return null
+  const { x, y } = pt.matrixTransform(ctm.inverse())
+  const d = Math.hypot(x - MARKET_CX, y - MARKET_CY)
+  if (d > 88) return null
+  if (d <= 28) return 'SOM'
+  if (d <= 58) return 'TOM'
+  return 'TAM'
+}
+
+function MarketSizingPanel() {
+  const [active, setActive] = useState<MarketAbbrev | null>(null)
+
+  const layerState = (abbrev: MarketAbbrev) => ({
+    on: active === abbrev,
+    dim: active !== null && active !== abbrev,
+  })
+
+  return (
+    <div
+      className="mx-auto flex flex-col items-center justify-center gap-5 sm:flex-row sm:items-center sm:gap-8 lg:gap-10"
+      onMouseLeave={() => setActive(null)}
+    >
+      <Tilt max={9}>
+        <div className={`flex flex-col items-center px-1 transition-transform duration-300 ease-out ${active ? 'scale-[1.02]' : ''}`}>
+          <div className="relative mx-auto h-40 w-40 shrink-0 sm:h-48 sm:w-48 lg:h-52 lg:w-52">
+            <svg
+              viewBox="0 0 200 200"
+              className="h-full w-full cursor-pointer"
+              aria-label="TAM, TOM and SOM market sizing — hover each ring"
+              onMouseMove={e => setActive(marketLayerAt(e.currentTarget, e.clientX, e.clientY))}
+            >
+              {MARKET_LAYERS.map(layer => {
+                const { on, dim } = layerState(layer.abbrev)
+                const scale = on ? 1.05 : 1
+                return (
+                  <circle
+                    key={layer.abbrev}
+                    cx={MARKET_CX}
+                    cy={MARKET_CY}
+                    r={layer.radius}
+                    fill={on ? layer.activeFill : layer.fill}
+                    stroke={layer.stroke}
+                    strokeWidth={on ? 2.5 : 1.5}
+                    strokeOpacity={on ? 1 : dim ? 0.3 : 0.65}
+                    opacity={dim ? 0.35 : 1}
+                    style={{
+                      transition: 'all 0.28s cubic-bezier(0.16, 0.84, 0.44, 1)',
+                      transform: `translate(${MARKET_CX}px, ${MARKET_CY}px) scale(${scale}) translate(${-MARKET_CX}px, ${-MARKET_CY}px)`,
+                      filter: on ? `drop-shadow(0 0 14px ${layer.stroke}99)` : undefined,
+                    }}
+                  />
+                )
+              })}
+            </svg>
+
+            <div
+              className={`pointer-events-none absolute left-1/2 top-0 -translate-x-1/2 -translate-y-0.5 rounded-md border border-cyan-500/35 bg-[#0a1520]/90 px-1.5 py-0.5 text-center shadow-lg backdrop-blur-sm transition-all duration-300 sm:px-2 sm:py-1 ${layerState('TAM').on ? MARKET_LAYERS[0].badgeActive : ''}`}
+            >
+              <p className="text-[7px] font-bold tracking-wide text-cyan-400 sm:text-[8px]">TAM</p>
+              <p className="text-[10px] font-bold leading-tight text-cyan-200 sm:text-xs">$100B+</p>
+            </div>
+
+            <div
+              className={`pointer-events-none absolute -right-0.5 top-[34%] translate-x-0.5 rounded-md border border-violet-500/35 bg-[#12101a]/90 px-1.5 py-0.5 text-center shadow-lg backdrop-blur-sm transition-all duration-300 sm:px-2 sm:py-1 ${layerState('TOM').on ? MARKET_LAYERS[1].badgeActive : ''}`}
+            >
+              <p className="text-[7px] font-bold tracking-wide text-violet-400 sm:text-[8px]">TOM</p>
+              <p className="text-[10px] font-bold leading-tight text-violet-200 sm:text-xs">$8–15B</p>
+            </div>
+
+            <div
+              className={`pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-md border border-pink-500/40 bg-[#1a0f16]/90 px-1.5 py-1 text-center shadow-lg backdrop-blur-sm transition-all duration-300 sm:px-2 ${layerState('SOM').on ? MARKET_LAYERS[2].badgeActive : ''}`}
+            >
+              <p className="text-[7px] font-bold tracking-wide text-pink-400 sm:text-[8px]">SOM</p>
+              <p className="text-[11px] font-bold leading-tight text-pink-200 sm:text-sm">$50–150M</p>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap justify-center gap-1 sm:mt-4 sm:gap-1.5">
+            {MARKET_LAYERS.map(layer => (
+              <span
+                key={layer.abbrev}
+                role="presentation"
+                onMouseEnter={() => setActive(layer.abbrev)}
+                onMouseLeave={() => setActive(null)}
+                className={`cursor-default rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[9px] transition-all duration-200 sm:text-[10px] ${
+                  layerState(layer.abbrev).on ? `${layer.activeRing} border-white/20` : 'hover:scale-105 hover:border-white/20 hover:bg-white/[0.07]'
+                } ${layerState(layer.abbrev).dim ? 'opacity-40' : ''}`}
+              >
+                <span className="font-bold text-white/55">{layer.abbrev}</span>{' '}
+                <span className={`font-bold bg-gradient-to-r bg-clip-text text-transparent ${layer.accent}`}>{layer.headline}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </Tilt>
+
+      <div className="w-full max-w-[14.5rem] shrink-0 space-y-1.5 sm:max-w-[16rem] sm:space-y-2">
+        {MARKET_LAYERS.map(layer => {
+          const { on, dim } = layerState(layer.abbrev)
+          return (
+            <div
+              key={layer.abbrev}
+              role="presentation"
+              onMouseEnter={() => setActive(layer.abbrev)}
+              onMouseLeave={() => setActive(null)}
+              className={`flex cursor-default items-start gap-2 rounded-lg border px-2.5 py-2 transition-all duration-200 sm:gap-2.5 sm:px-3 sm:py-2.5 ${
+                on
+                  ? layer.activeRing
+                  : `border-white/[0.06] bg-white/[0.02] ${layer.ringHover}`
+              } ${dim ? 'opacity-45' : ''}`}
+            >
+              <div
+                className={`mt-px flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-gradient-to-br text-[8px] font-bold text-white transition-transform duration-200 sm:h-7 sm:w-7 sm:text-[9px] ${layer.accent} ${on ? 'scale-110' : ''}`}
+              >
+                {layer.abbrev}
+              </div>
+              <div className="min-w-0">
+                <p className={`text-[10px] font-medium leading-snug sm:text-[11px] ${on ? 'text-white' : 'text-white/80'}`}>{layer.name}</p>
+                <p className="mt-0.5 text-[9px] leading-snug text-white/45 sm:text-[10px]">{layer.desc}</p>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+const AI_DATA_CHANNELS = [
+  { icon: BrainCircuit, label: 'Agents & LLMs', sub: 'Verified pipelines' },
+  { icon: Database, label: 'RAG & training', sub: 'Schema-governed chunks' },
+  { icon: Cpu, label: 'Live signals', sub: 'Kafka streams' },
+  { icon: Layers, label: 'Marketplace', sub: 'Ready-made feeds' },
+]
+
 const PARTICLES = Array.from({ length: 22 }, (_, i) => ({
   left: `${(i * 37) % 100}%`,
   delay: `${(i % 11) * 0.9}s`,
@@ -255,6 +446,7 @@ export default function Landing() {
             <a href="#platform" className="transition hover:text-white">Platform</a>
             <a href="#architecture" className="transition hover:text-white">Architecture</a>
             <a href="#verticals" className="transition hover:text-white">Verticals</a>
+            <a href="#market" className="transition hover:text-white">Market</a>
           </nav>
           <div className="ml-auto flex items-center gap-2 md:ml-6">
             <button type="button" onClick={() => navigate('/showcase')} className="btn-action-secondary hidden px-4 sm:block">Live Demo</button>
@@ -482,6 +674,57 @@ export default function Landing() {
             </Reveal>
           ))}
         </div>
+      </section>
+
+      {/* market opportunity — TAM / TOM / SOM (after verticals) */}
+      <section id="market" className="mx-auto max-w-7xl px-5 py-14 sm:px-8 sm:py-20">
+        <Reveal className="mb-8 text-center sm:mb-10">
+          <p className="text-xs font-semibold uppercase tracking-widest text-accent-violet/80 sm:text-sm">Market opportunity</p>
+          <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl lg:text-4xl">
+            A <span className="gradient-text">$100B+</span> market with a clear wedge
+          </h2>
+          <p className="mx-auto mt-2 max-w-lg text-sm text-white/50 sm:mt-3 sm:max-w-xl">
+            Data infra, AI agents, and vertical SaaS — one platform, one budget line.
+          </p>
+        </Reveal>
+
+        <Reveal variant="reveal-scale">
+          <div className="mx-auto max-w-4xl">
+            <div className="holo glass-flat p-4 sm:px-8 sm:py-7 lg:px-10 lg:py-8">
+              <MarketSizingPanel />
+            </div>
+          </div>
+        </Reveal>
+
+        <Reveal delay={120} className="mt-5 sm:mt-6">
+          <div className="mx-auto max-w-4xl holo glass-flat overflow-hidden">
+            <div className="flex flex-col items-center gap-2 border-b border-white/10 bg-gradient-to-r from-accent-violet/10 via-accent-cyan/10 to-accent-pink/10 px-4 py-4 text-center sm:gap-3 sm:px-8 sm:py-5">
+              <div className="flex items-center gap-2.5 sm:gap-3">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-accent-violet to-accent-cyan shadow-lg shadow-accent-violet/20 sm:h-9 sm:w-9 sm:rounded-xl">
+                  <Sparkles className="h-3.5 w-3.5 text-white sm:h-4 sm:w-4" />
+                </div>
+                <div className="text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-accent-cyan/80 sm:text-xs">AI-ready data</p>
+                  <h3 className="text-sm font-bold tracking-tight sm:text-base lg:text-lg">Data for model-hungry AI</h3>
+                </div>
+              </div>
+              <p className="max-w-sm text-[10px] text-white/50 sm:max-w-md sm:text-xs">
+                Governed streams and marketplace feeds — not months of custom pipeline work.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-px bg-white/10 sm:grid-cols-4">
+              {AI_DATA_CHANNELS.map(({ icon: Icon, label, sub }) => (
+                <div key={label} className="flex flex-col items-center gap-1 bg-[#0e0e18]/75 px-2 py-3 text-center sm:gap-1.5 sm:px-4 sm:py-4">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-white/5 ring-1 ring-white/10 sm:h-8 sm:w-8">
+                    <Icon className="h-3.5 w-3.5 text-accent-cyan sm:h-4 sm:w-4" />
+                  </div>
+                  <p className="text-[10px] font-medium text-white/85 sm:text-xs">{label}</p>
+                  <p className="text-[9px] text-white/40 sm:text-[10px]">{sub}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Reveal>
       </section>
 
       {/* CTA */}

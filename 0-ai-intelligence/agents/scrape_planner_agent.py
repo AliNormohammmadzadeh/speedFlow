@@ -159,7 +159,7 @@ Seed URL if any: {hints.get('url', 'none')}
             return True
         if hints.get("use_proxy") is False:
             return False
-        blob = " ".join([text, hints.get("url", "")]).lower()
+        blob = " ".join([text, hints.get("url") or ""]).lower()
         keywords = [
             "blocked", "cloudflare", "anti-bot", "many requests", "scale",
             "rate limit", "proxy", "sportsbook", "betting", "geo-block",
